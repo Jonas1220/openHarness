@@ -2,7 +2,7 @@
   "name": "openharness",
   "private": true,
   "version": "0.1.0",
-  "description": "An open-source agent harness for local, open-weight models — like Codex or Claude Code, but for Ollama.",
+  "description": "An open-source agent harness for local, open-weight models \u2014 like Codex or Claude Code, but for Ollama.",
   "license": "MIT",
   "type": "module",
   "workspaces": [
@@ -18,7 +18,8 @@
     "dist": "npm run dist -w @openharness/desktop",
     "cli": "npm run start -w @openharness/cli --",
     "test": "vitest run",
-    "typecheck": "tsc -p packages/core && tsc -p packages/cli"
+    "typecheck": "tsc -p packages/core && tsc -p packages/cli && tsc -p apps/desktop",
+    "postinstall": "node scripts/ensure-electron.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -41,7 +41,15 @@ cd openHarness && npm install
 npm run dev
 ```
 
-The last command starts the desktop app. Or use the CLI:
+The last command starts the desktop app in development mode. To build a `.dmg`:
+
+```bash
+npm run dist
+```
+
+The DMG lands in `apps/desktop/release/`. Builds aren't signed yet, so the first time you open the app, right-click it and choose **Open**.
+
+Or use the CLI:
 
 ```bash
 npm run cli -- -m qwen3:8b
@@ -91,9 +99,21 @@ docs/research     What we learned from Codex, Claude Code and ChatGPT dots
 See [docs/research/harness-study.md](docs/research/harness-study.md) for the
 design rationale.
 
+## Daemons
+
+A daemon is an agent that keeps running after you close the chat. Give it:
+
+- a **goal** (what to work toward or watch)
+- a **schedule** (manual, every N minutes, or daily at a set time)
+- a **workspace** folder and a **permission mode**
+
+On each run it gets its goal, its memory file and the summary of its last run. It works with the normal tools plus `report_to_user` and `update_memory`. Reports land in the **Inbox** and show up as macOS notifications. When a daemon needs approval, the request waits in the inbox for up to 30 minutes and is then denied. Closing the window keeps openHarness in the menu bar, so daemons keep running.
+
 ## Contributing
 
 Issues and PRs are welcome. Run `npm test` and `npm run typecheck` before you open a PR.
+
+To work on the UI without Electron or Ollama, run `npx vite apps/desktop/src/renderer` and open the URL it prints in a browser. When the preload API is missing, the UI uses a scripted mock backend (`src/renderer/src/mock.ts`).
 
 ## License
 

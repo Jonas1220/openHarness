@@ -1,0 +1,18 @@
+appId: dev.openharness.app
+productName: openHarness
+copyright: Copyright © 2026 openHarness contributors
+directories:
+  output: release
+  buildResources: build
+# Main, preload and renderer are fully bundled by electron-vite, so no node_modules ship.
+files:
+  - out/**
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  hardenedRuntime: true
+dmg:
+  artifactName: openHarness-${version}-${arch}.dmg
