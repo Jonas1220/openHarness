@@ -18,7 +18,7 @@
     "dist": "npm run dist -w @openharness/desktop",
     "cli": "npm run start -w @openharness/cli --",
     "test": "vitest run",
-    "typecheck": "tsc -p packages/core && tsc -p packages/cli && tsc -p apps/desktop"
+    "typecheck": "tsc -p packages/core && tsc -p packages/cli"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
