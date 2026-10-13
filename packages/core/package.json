@@ -1,0 +1,14 @@
+{
+  "name": "@openharness/core",
+  "version": "0.1.0",
+  "description": "Agent harness core for local models: agent loop, tools, permissions, sandbox, MCP and daemons.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@openharness/cli",
+  "version": "0.1.0",
+  "description": "Terminal interface for the openHarness agent.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "openharness": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@openharness/core": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0"
+  }
+}
