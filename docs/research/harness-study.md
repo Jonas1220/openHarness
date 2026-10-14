@@ -1,7 +1,7 @@
-# Harness study: what openHarness borrows from Codex, Claude Code and ChatGPT dots
+# Harness study: what Open Harness borrows from Codex, Claude Code and ChatGPT dots
 
 This note records what we learned from existing agent harnesses before writing
-openHarness, and which of those ideas made it into the design.
+Open Harness, and which of those ideas made it into the design.
 
 ## Sources
 
@@ -19,7 +19,7 @@ needs Hopper, Ghidra or IDA. Codex is open source, so reading its source was
 more precise than reverse engineering its binary. Claude Code ships as a
 Bun-compiled Mach-O binary. We decided not to extract or redistribute anything
 from it. Instead we relied on its public docs and on how it behaves when used.
-openHarness supports MCP, so REA can be added as a tool server (see the README).
+Open Harness supports MCP, so REA can be added as a tool server (see the README).
 
 ## Patterns adopted
 
@@ -33,14 +33,14 @@ tool*. Both harnesses bound the loop and let the user interrupt at any point.
 Claude Code exposes a small set of tools: read, write, string-replace edit,
 glob, grep, bash, todo list and web fetch. Codex uses a custom `apply_patch`
 grammar instead. Small open models make far fewer mistakes with
-**exact-string replacement** than with a patch grammar, so openHarness uses
+**exact-string replacement** than with a patch grammar, so Open Harness uses
 `edit_file(old_string, new_string)` and checks that `old_string` is unique.
 → `packages/core/src/tools/`
 
 ### 3. Approval policy × sandbox mode (Codex)
 Codex separates *when to ask* (`untrusted`, `on-request`, `never`) from *what
 a command may touch* (`read-only`, `workspace-write`, `danger-full-access`).
-openHarness simplifies this into four modes the user can understand:
+Open Harness simplifies this into four modes the user can understand:
 
 | Mode | File edits | Shell commands |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ remembers approvals per tool and command prefix.
 Codex runs commands through `/usr/bin/sandbox-exec` with an SBPL profile.
 It always uses the absolute `/usr/bin` path so a binary planted on `PATH` can't
 take its place. It passes writable roots as `-D` parameters instead of
-interpolating paths into the profile. openHarness does the same, with a smaller
+interpolating paths into the profile. Open Harness does the same, with a smaller
 profile: allow by default, deny writes outside the workspace and temp dirs, and
 deny outbound network except to localhost.
 → `packages/core/src/sandbox.ts`
@@ -65,14 +65,14 @@ deny outbound network except to localhost.
 ### 5. Project instructions files (both)
 Codex reads `AGENTS.md`, and Claude Code reads `CLAUDE.md`, from the home
 directory and from every directory between the repo root and the working
-directory. openHarness reads `AGENTS.md` and `OPENHARNESS.md`, so existing
+directory. Open Harness reads `AGENTS.md` and `OPENHARNESS.md`, so existing
 repos work without changes.
 → `packages/core/src/context.ts`
 
 ### 6. Context compaction (both)
 When the context nears its limit, the older history is replaced by a
 model-written handoff summary and the most recent messages are kept.
-openHarness reads the real prompt token count from Ollama's
+Open Harness reads the real prompt token count from Ollama's
 `prompt_eval_count`, so it needs no tokenizer.
 → `packages/core/src/compaction.ts`
 
@@ -92,7 +92,7 @@ between conversations, keeps memory, reports back only when something needs
 attention, and still asks before sensitive actions. Codex's persistent-mode
 prompt adds useful rules: close open loops, don't invent work, define a
 stopping condition, and don't send duplicate messages.
-openHarness implements this as **Daemons**. Each one runs locally on a
+Open Harness implements this as **Daemons**. Each one runs locally on a
 schedule against a local model, with a memory file, an inbox, and approval
 requests that wait for the user.
 → `packages/core/src/daemons.ts`
@@ -106,4 +106,4 @@ requests that wait for the user.
   decide between native tool calling and the text fallback.
 * **Text fallback for tool calls.** Many open models print tool calls as JSON
   or inside `<tool_call>` tags instead of using the structured field.
-  openHarness parses both.
+  Open Harness parses both.

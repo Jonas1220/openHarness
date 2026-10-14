@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { McpServerConfig } from './mcp.ts';
-import type { Message, PermissionMode } from './types.ts';
+import type { Checkpoint, Message, PermissionMode } from './types.ts';
 
 export function dataDir(): string {
   return process.env.OPENHARNESS_HOME ?? path.join(os.homedir(), '.openharness');
@@ -46,10 +46,65 @@ export interface SessionMeta {
   updatedAt: string;
   /** Set for sessions that belong to a daemon run. */
   daemonId?: string;
+  projectId?: string;
 }
 
 export interface Session extends SessionMeta {
   messages: Message[];
+  checkpoints?: Checkpoint[];
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  path: string;
+  createdAt: string;
+  /** Defaults for new chats in this project. */
+  model?: string;
+  mode?: PermissionMode;
+}
+
+/** Projects are pinned workspace folders that group chats, like in Codex and Claude Code. */
+export class ProjectStore {
+  private file = path.join(dataDir(), 'projects.json');
+  private projects: Project[] = [];
+
+  async load(): Promise<Project[]> {
+    this.projects = (await readJson<Project[]>(this.file)) ?? [];
+    return this.projects;
+  }
+
+  list(): Project[] {
+    return this.projects;
+  }
+
+  get(id: string): Project | undefined {
+    return this.projects.find((p) => p.id === id);
+  }
+
+  findByPath(dir: string): Project | undefined {
+    const target = path.resolve(dir);
+    return this.projects.find((p) => path.resolve(p.path) === target);
+  }
+
+  async upsert(input: Partial<Project> & Pick<Project, 'path'>): Promise<Project> {
+    const existing = (input.id && this.get(input.id)) || this.findByPath(input.path);
+    const next: Project = {
+      name: path.basename(input.path),
+      createdAt: new Date().toISOString(),
+      ...existing,
+      ...input,
+      id: existing?.id ?? randomUUID(),
+    };
+    this.projects = existing ? this.projects.map((p) => (p.id === next.id ? next : p)) : [...this.projects, next];
+    await writeJson(this.file, this.projects);
+    return next;
+  }
+
+  async remove(id: string): Promise<void> {
+    this.projects = this.projects.filter((p) => p.id !== id);
+    await writeJson(this.file, this.projects);
+  }
 }
 
 export class SessionStore {
@@ -82,7 +137,7 @@ export class SessionStore {
       if (!f.endsWith('.json')) continue;
       const s = await readJson<Session>(path.join(this.dir, f));
       if (s) {
-        const { messages: _messages, ...meta } = s;
+        const { messages: _messages, checkpoints: _checkpoints, ...meta } = s;
         metas.push(meta);
       }
     }

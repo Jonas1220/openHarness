@@ -2,7 +2,7 @@
 import readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { parseArgs } from 'node:util';
-import { Agent, McpManager, OllamaClient, PERMISSION_MODES, loadConfig, type PermissionMode } from '@openharness/core';
+import { Agent, McpManager, OllamaClient, PERMISSION_MODES, expandCommand, loadCommands, loadConfig, type PermissionMode } from '@openharness/core';
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -12,7 +12,7 @@ const c = {
   bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
 };
 
-const HELP = `openharness — agent harness for local models
+const HELP = `Open Harness — agent harness for local models
 
 Usage:
   openharness [options] [prompt]
@@ -24,7 +24,8 @@ Options:
   -p, --print          Run the prompt once, print the answer, and exit
   -h, --help           Show this help
 
-In the REPL: /mode <mode>, /model <name>, /compact, /clear, /exit`;
+In the REPL: /mode <mode>, /plan, /model <name>, /compact, /rewind, /clear, /exit,
+plus /init, /review and your custom commands (~/.openharness/commands/*.md).`;
 
 async function main() {
   const { values, positionals } = parseArgs({
@@ -63,6 +64,7 @@ async function main() {
     extraTools: mcp.getTools(),
     approve: async (req) => {
       if (values.print) return { kind: 'deny', feedback: 'Non-interactive mode: approvals are not available.' };
+      if (req.toolName === 'propose_plan') console.log(`\n${String(req.args.plan ?? '')}\n`);
       const answer = (await rl.question(c.yellow(`\n? ${req.reason}: ${req.summary}\n  [y]es / [a]lways this session / [n]o (or type feedback) › `))).trim();
       if (/^y(es)?$/i.test(answer)) return { kind: 'allow' };
       if (/^a(lways)?$/i.test(answer)) return { kind: 'allow-session' };
@@ -120,7 +122,7 @@ async function main() {
     return;
   }
 
-  console.log(c.bold('openHarness') + c.dim(` · ${agent.model} · ${agent.permissions.mode} · ${agent.cwd}`));
+  console.log(c.bold('Open Harness') + c.dim(` · ${agent.model} · ${agent.permissions.mode} · ${agent.cwd}`));
   console.log(c.dim('Type /help for commands. Ctrl+C interrupts.\n'));
   let next = initial;
   while (true) {
@@ -135,7 +137,21 @@ async function main() {
       else if (cmd === 'model' && arg) agent.setModel(arg);
       else if (cmd === 'clear') agent.reset();
       else if (cmd === 'compact') console.log(c.dim(`compacted ${await agent.compactNow()} messages`));
-      else console.log(c.red(`Unknown command: ${next}`));
+      else if (cmd === 'plan') {
+        agent.setMode('plan');
+        console.log(c.dim('plan mode: the agent explores and proposes a plan before changing anything'));
+        if (arg) {
+          next = arg;
+          await agent.send(next);
+        }
+      } else if (cmd === 'rewind') {
+        const last = [...agent.messages].reverse().find((m) => m.role === 'user' && m.id);
+        if (last?.id) console.log(c.dim(`rewound; restored ${(await agent.rewind(last.id)).length} file(s)`));
+      } else {
+        const custom = (await loadCommands(agent.cwd)).find((x) => x.name === cmd && x.body);
+        if (custom) await agent.send(expandCommand(custom, arg));
+        else console.log(c.red(`Unknown command: ${next}`));
+      }
       next = '';
       continue;
     }

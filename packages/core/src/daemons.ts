@@ -8,7 +8,7 @@ import type { AgentEvent, ApprovalDecision, ApprovalRequest, PermissionMode, Too
 
 /**
  * Daemons are always-on agents: each has a standing goal, a schedule, a memory
- * file it maintains itself, and an inbox it reports to. They are openHarness's
+ * file it maintains itself, and an inbox it reports to. They are Open Harness's
  * local take on ChatGPT "dots" — they run between conversations, surface only
  * what needs attention, and wait for the user before sensitive actions.
  */

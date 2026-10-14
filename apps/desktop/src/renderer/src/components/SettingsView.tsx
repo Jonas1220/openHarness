@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Config, McpServerStatus, ModelInfo, PermissionMode } from '@openharness/core';
+import type { Config, McpServerStatus, ModelInfo, PermissionMode, Skill } from '@openharness/core';
 import { MODES } from './ChatView';
 
 const SUGGESTED = ['qwen3:8b', 'qwen3:14b', 'qwen3-coder:30b', 'gpt-oss:20b', 'llama3.1:8b'];
@@ -9,6 +9,7 @@ export function SettingsView(p: {
   models: ModelInfo[];
   mcp: McpServerStatus[];
   ollamaVersion: string | null;
+  home: string;
   onSave: (c: Config) => Promise<void>;
   onRefreshModels: () => void;
 }) {
@@ -18,6 +19,14 @@ export function SettingsView(p: {
   const [pullName, setPullName] = useState('');
   const [pull, setPull] = useState<{ name: string; status: string; pct?: number } | null>(null);
   const [saved, setSaved] = useState(false);
+  const [memory, setMemory] = useState('');
+  const [memoryDirty, setMemoryDirty] = useState(false);
+  const [skills, setSkills] = useState<Skill[]>([]);
+
+  useEffect(() => {
+    void window.oh.readInstructions(null).then(setMemory);
+    void window.oh.listSkills(p.home).then(setSkills);
+  }, []);
 
   useEffect(
     () =>
@@ -38,6 +47,10 @@ export function SettingsView(p: {
       return;
     }
     await p.onSave({ ...cfg, mcpServers });
+    if (memoryDirty) {
+      await window.oh.writeInstructions(null, memory);
+      setMemoryDirty(false);
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -150,6 +163,39 @@ export function SettingsView(p: {
               )}
             </div>
           )}
+        </section>
+
+        <section className="form">
+          <h3>Global instructions</h3>
+          <p className="hint">
+            Saved to <code>~/.openharness/AGENTS.md</code> and given to every chat and daemon: your preferences, conventions, and facts about you.
+          </p>
+          <textarea
+            className="memory"
+            rows={8}
+            value={memory}
+            placeholder="- I prefer TypeScript and pnpm&#10;- Always run the tests before saying something works"
+            onChange={(e) => {
+              setMemory(e.target.value);
+              setMemoryDirty(true);
+            }}
+          />
+        </section>
+
+        <section className="form">
+          <h3>Skills</h3>
+          <p className="hint">
+            Folders with a <code>SKILL.md</code> in <code>~/.openharness/skills</code>, <code>~/.agents/skills</code> or <code>~/.claude/skills</code>. Projects can add their own in <code>.agents/skills</code>.
+          </p>
+          <ul className="models">
+            {skills.map((s) => (
+              <li key={s.file}>
+                <strong>{s.name}</strong>
+                <span>{s.description.slice(0, 120)}</span>
+              </li>
+            ))}
+            {!skills.length && <li className="hint">No global skills installed.</li>}
+          </ul>
         </section>
 
         <section className="form">

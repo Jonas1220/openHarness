@@ -1,12 +1,13 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { dataDir } from './store.ts';
 import { exec } from './tools/shell.ts';
 import type { PermissionMode } from './types.ts';
 
 export const INSTRUCTION_FILES = ['AGENTS.md', 'OPENHARNESS.md'];
 
-const BASE_PROMPT = `You are openHarness, a coding and computer agent running on the user's own machine with a local model.
+const BASE_PROMPT = `You are Open Harness, a coding and computer agent running on the user's own machine with a local model.
 You help with software engineering and general tasks by using tools to inspect and change files and run commands.
 
 # How to work
@@ -29,6 +30,7 @@ You help with software engineering and general tasks by using tools to inspect a
 - Never expose secrets you come across.`;
 
 const MODE_NOTES: Record<PermissionMode, string> = {
+  plan: `You are in PLAN mode. Do not change anything yet. Explore the code with read-only tools (and the task tool for broad searches), ask the user if requirements are unclear, then call propose_plan with a concrete step-by-step plan: files to change, what changes, and how you will verify. Wait for approval.`,
   'read-only': 'You are in READ-ONLY mode: you cannot edit files. Commands need user approval and run in a sandbox without write access.',
   ask: 'The user approves every file edit and command before it runs. If the user denies a call, adapt instead of retrying it.',
   'auto-edit': 'File edits inside the workspace run without approval. Commands need user approval.',
@@ -81,7 +83,7 @@ async function gitSummary(cwd: string): Promise<string | null> {
 }
 
 /**
- * Collect AGENTS.md / OPENHARNESS.md from ~/.openharness, then from the filesystem
+ * Collect AGENTS.md / OPENHARNESS.md from ~/.openharness (global instructions), then from the filesystem
  * root down to cwd (closer files come later and therefore take precedence).
  */
 export async function loadInstructions(cwd: string): Promise<string> {
@@ -93,7 +95,7 @@ export async function loadInstructions(cwd: string): Promise<string> {
     if (parent === dir) break;
     dir = parent;
   }
-  const candidates = [path.join(os.homedir(), '.openharness'), ...dirs.filter((d) => d !== os.homedir())];
+  const candidates = [dataDir(), ...dirs.filter((d) => d !== os.homedir())];
   const sections: string[] = [];
   for (const d of candidates) {
     for (const name of INSTRUCTION_FILES) {

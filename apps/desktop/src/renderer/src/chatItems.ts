@@ -1,7 +1,7 @@
 import type { AgentEvent, ApprovalDecision, Message } from '../../shared/ipc';
 
 export type ChatItem =
-  | { kind: 'user'; id: string; text: string }
+  | { kind: 'user'; id: string; text: string; images?: string[] }
   | { kind: 'assistant'; id: string; text: string; thinking: string; streaming: boolean }
   | {
       kind: 'tool';
@@ -12,11 +12,19 @@ export type ChatItem =
       status: 'running' | 'awaiting' | 'done' | 'error' | 'denied';
       output?: string;
       reason?: string;
+      /** Tool calls made by a subagent (task tool). */
+      progress?: string[];
     }
   | { kind: 'notice'; id: string; text: string; tone: 'info' | 'error' };
 
 let seq = 0;
-const uid = () => `i${Date.now().toString(36)}${(seq++).toString(36)}`;
+export const uid = () => `i${Date.now().toString(36)}${(seq++).toString(36)}`;
+
+/** Attached @file contents are appended to the user message; hide them in the transcript. */
+export function stripAttachments(text: string): string {
+  const i = text.indexOf('\n\n<attached_files>');
+  return i >= 0 ? text.slice(0, i) : text;
+}
 
 /** Rebuild the chat view from a saved transcript. */
 export function itemsFromMessages(messages: Message[]): ChatItem[] {
@@ -27,7 +35,7 @@ export function itemsFromMessages(messages: Message[]): ChatItem[] {
       items.push(
         m.summary
           ? { kind: 'notice', id: uid(), text: 'Earlier messages were summarized to save context.', tone: 'info' }
-          : { kind: 'user', id: uid(), text: m.content },
+          : { kind: 'user', id: m.id ?? uid(), text: stripAttachments(m.content), images: m.images },
       );
     } else if (m.role === 'assistant') {
       if (m.content || m.thinking) items.push({ kind: 'assistant', id: uid(), text: m.content, thinking: m.thinking ?? '', streaming: false });
@@ -84,6 +92,10 @@ export function applyEvent(items: ChatItem[], e: AgentEvent): ChatItem[] {
       return updateTool(items, e.request.id, { status: 'awaiting', reason: e.request.reason });
     case 'approval_resolved':
       return updateTool(items, e.requestId, { status: decisionStatus(e.decision) });
+    case 'subagent_progress':
+      return items.map((i) => (i.kind === 'tool' && i.id === e.callId ? { ...i, progress: [...(i.progress ?? []), e.summary] } : i));
+    case 'mode_changed':
+      return [...items, { kind: 'notice', id: uid(), text: `Plan approved — switched to ${e.mode} mode.`, tone: 'info' }];
     case 'tool_result': {
       const denied = e.result.output.startsWith('User denied');
       return updateTool(items, e.callId, { status: denied ? 'denied' : e.result.isError ? 'error' : 'done', output: e.result.output });
@@ -113,4 +125,4 @@ function updateTool(items: ChatItem[], id: string, patch: Partial<Extract<ChatIt
   return items.map((i) => (i.kind === 'tool' && i.id === id ? { ...i, ...patch } : i));
 }
 
-export const newUserItem = (text: string): ChatItem => ({ kind: 'user', id: uid(), text });
+export const newUserItem = (text: string, id: string, images?: string[]): ChatItem => ({ kind: 'user', id, text, images });

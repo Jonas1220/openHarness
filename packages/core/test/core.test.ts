@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -7,7 +7,13 @@ import {
   DaemonManager,
   PermissionEngine,
   builtinTools,
+  expandCommand,
+  expandMentions,
   extractTextToolCalls,
+  fuzzyFilter,
+  loadCommands,
+  loadSkills,
+  stripAttachments,
   ruleKeys,
   toTextMode,
   wrapCommand,
@@ -29,6 +35,7 @@ afterEach(async () => {
 const tool = (name: string) => builtinTools().find((t) => t.name === name)!;
 const ctx = (): ToolContext => ({
   cwd: dir,
+  callId: 'c',
   signal: new AbortController().signal,
   sandbox: { enabled: false, writableRoots: [], allowNetwork: true },
   state: new Map(),
@@ -224,6 +231,116 @@ describe('daemons', () => {
     expect(await mgr.readMemory(d.id)).toBe('checked once');
     expect(mgr.getInbox().map((i) => i.title)).toContain('Done');
     expect(mgr.list()[0]!.lastSummary).toBe('Checked; all good.');
+  });
+});
+
+describe('plan mode', () => {
+  it('blocks edits, then switches mode when the plan is approved', async () => {
+    const client = new FakeOllama([
+      [{ toolCalls: [{ name: 'write_file', arguments: { path: 'x.txt', content: 'no' } }] }],
+      [{ toolCalls: [{ name: 'propose_plan', arguments: { plan: '1. write x.txt' } }] }],
+      [{ toolCalls: [{ name: 'write_file', arguments: { path: 'x.txt', content: 'yes' } }] }],
+      [{ content: 'Done.' }],
+    ]);
+    const modes: string[] = [];
+    const agent = new Agent({
+      client: client as never,
+      model: 'm',
+      cwd: dir,
+      mode: 'plan',
+      skills: false,
+      approve: async (req) => (req.toolName === 'propose_plan' ? { kind: 'allow', mode: 'auto-edit' } : { kind: 'deny' }),
+    });
+    agent.on((e) => e.type === 'mode_changed' && modes.push(e.mode));
+    await agent.send('make x');
+    expect(modes).toEqual(['auto-edit']);
+    expect(agent.mode).toBe('auto-edit');
+    expect(await readFile(path.join(dir, 'x.txt'), 'utf8')).toBe('yes');
+    expect(agent.messages.find((m) => m.role === 'tool')!.content).toMatch(/Plan mode/);
+    // propose_plan is only offered in plan mode
+    expect(client.requests[0]!.tools!.some((t) => t.name === 'propose_plan')).toBe(true);
+    expect(client.requests[2]!.tools!.some((t) => t.name === 'propose_plan')).toBe(false);
+  });
+});
+
+describe('checkpoints and rewind', () => {
+  it('restores files and truncates the conversation', async () => {
+    const file = path.join(dir, 'a.txt');
+    await writeFile(file, 'v1');
+    const client = new FakeOllama([
+      [{ toolCalls: [{ name: 'write_file', arguments: { path: 'a.txt', content: 'v2' } }] }],
+      [{ toolCalls: [{ name: 'write_file', arguments: { path: 'new.txt', content: 'hi' } }] }],
+      [{ content: 'ok' }],
+      [{ toolCalls: [{ name: 'write_file', arguments: { path: 'a.txt', content: 'v3' } }] }],
+      [{ content: 'ok' }],
+    ]);
+    const agent = new Agent({ client: client as never, model: 'm', cwd: dir, mode: 'auto-edit', skills: false, approve: async () => ({ kind: 'allow' }) });
+    await agent.send('first', { id: 'u1' });
+    await agent.send('second', { id: 'u2' });
+    expect(await readFile(file, 'utf8')).toBe('v3');
+    expect(agent.checkpoints.changedFiles().sort()).toEqual([file, path.join(dir, 'new.txt')].sort());
+
+    await agent.rewind('u2');
+    expect(await readFile(file, 'utf8')).toBe('v2');
+    expect(agent.messages.some((m) => m.id === 'u2')).toBe(false);
+
+    await agent.rewind('u1');
+    expect(await readFile(file, 'utf8')).toBe('v1');
+    await expect(readFile(path.join(dir, 'new.txt'), 'utf8')).rejects.toThrow();
+    expect(agent.messages.filter((m) => m.role !== 'system')).toHaveLength(0);
+  });
+});
+
+describe('subagents', () => {
+  it('runs a read-only child agent and returns its report', async () => {
+    await writeFile(path.join(dir, 'notes.md'), 'secret sauce');
+    const client = new FakeOllama([
+      [{ toolCalls: [{ name: 'task', arguments: { description: 'find notes', prompt: 'What is in notes.md?' } }] }],
+      [{ toolCalls: [{ name: 'read_file', arguments: { path: 'notes.md' } }] }], // child
+      [{ content: 'notes.md says: secret sauce' }], // child report
+      [{ content: 'It says secret sauce.' }],
+    ]);
+    const agent = new Agent({ client: client as never, model: 'm', cwd: dir, mode: 'ask', skills: false, approve: async () => ({ kind: 'allow' }) });
+    const progress: string[] = [];
+    agent.on((e) => e.type === 'subagent_progress' && progress.push(e.summary));
+    await agent.send('ask a subagent');
+    expect(progress).toEqual(['Read notes.md']);
+    expect(agent.messages.find((m) => m.toolName === 'task')!.content).toBe('notes.md says: secret sauce');
+    // the child only had read-only tools
+    expect(client.requests[1]!.tools!.map((t) => t.name).sort()).toEqual(['glob', 'grep', 'list_dir', 'read_file']);
+  });
+});
+
+describe('commands, skills and mentions', () => {
+  it('loads project commands and expands arguments', async () => {
+    await mkdir(path.join(dir, '.openharness', 'commands'), { recursive: true });
+    await writeFile(path.join(dir, '.openharness', 'commands', 'fix.md'), '---\ndescription: Fix an issue\n---\nFix issue #$ARGUMENTS carefully.');
+    const cmds = await loadCommands(dir);
+    const fix = cmds.find((c) => c.name === 'fix')!;
+    expect(fix.description).toBe('Fix an issue');
+    expect(expandCommand(fix, '42')).toBe('Fix issue #42 carefully.');
+    expect(cmds.some((c) => c.name === 'init')).toBe(true);
+  });
+
+  it('lists skills and loads one on demand', async () => {
+    await mkdir(path.join(dir, '.agents', 'skills', 'deploy'), { recursive: true });
+    await writeFile(path.join(dir, '.agents', 'skills', 'deploy', 'SKILL.md'), '---\nname: deploy\ndescription: Deploy the app\n---\nRun make deploy.');
+    const skills = await loadSkills(dir);
+    expect(skills.find((s) => s.name === 'deploy')?.description).toBe('Deploy the app');
+  });
+
+  it('inlines @mentioned files and strips them for display', async () => {
+    await writeFile(path.join(dir, 'b.ts'), 'export const b = 1;');
+    const out = await expandMentions('look at @b.ts please', dir);
+    expect(out).toContain('<file path="b.ts">');
+    expect(stripAttachments(out)).toBe('look at @b.ts please');
+    expect(await expandMentions('mail me @nobody', dir)).toBe('mail me @nobody');
+  });
+
+  it('fuzzy-matches file names', () => {
+    const files = ['src/agent.ts', 'src/tools/shell.ts', 'README.md', 'test/agent.test.ts'];
+    expect(fuzzyFilter(files, 'agent')[0]).toBe('src/agent.ts');
+    expect(fuzzyFilter(files, 'shl')).toEqual(['src/tools/shell.ts']);
   });
 });
 

@@ -1,12 +1,15 @@
 import path from 'node:path';
 import type { PermissionMode, SandboxPolicy, Tool } from './types.ts';
 
+export const PROPOSE_PLAN = 'propose_plan';
+
 export type PermissionVerdict =
   | { kind: 'allow'; sandboxed: boolean }
   | { kind: 'ask'; reason: string; sandboxed: boolean }
   | { kind: 'deny'; reason: string };
 
 export const PERMISSION_MODES: { id: PermissionMode; label: string; description: string }[] = [
+  { id: 'plan', label: 'Plan', description: 'Explores and proposes a plan for your approval. Edits nothing until you approve.' },
   { id: 'read-only', label: 'Read only', description: 'Can read and search. Never edits files; asks before running commands.' },
   { id: 'ask', label: 'Ask', description: 'Asks before every edit and command.' },
   { id: 'auto-edit', label: 'Auto edit', description: 'Edits files in the workspace freely; asks before running commands.' },
@@ -26,21 +29,32 @@ export class PermissionEngine {
     public workspace: string,
   ) {}
 
+  /** Modes in which the workspace must not change. */
+  private get readOnly(): boolean {
+    return this.mode === 'read-only' || this.mode === 'plan';
+  }
+
   sandboxPolicy(): SandboxPolicy {
     return {
-      enabled: this.mode === 'full-auto' || this.mode === 'read-only',
-      writableRoots: this.mode === 'read-only' ? [] : [this.workspace],
+      enabled: this.mode === 'full-auto' || this.readOnly,
+      writableRoots: this.readOnly ? [] : [this.workspace],
       allowNetwork: false,
     };
   }
 
   check(tool: Tool, args: Record<string, unknown>): PermissionVerdict {
+    if (tool.name === PROPOSE_PLAN) {
+      return this.mode === 'plan' ? { kind: 'ask', reason: 'Plan ready for review', sandboxed: false } : { kind: 'allow', sandboxed: false };
+    }
     if (tool.kind === 'read' || tool.kind === 'meta') {
       return { kind: 'allow', sandboxed: false };
     }
-    if (this.isRemembered(tool, args)) return { kind: 'allow', sandboxed: this.mode === 'read-only' };
+    if (this.isRemembered(tool, args)) return { kind: 'allow', sandboxed: this.readOnly };
 
     if (tool.kind === 'write') {
+      if (this.mode === 'plan') {
+        return { kind: 'deny', reason: 'Plan mode: files cannot be changed yet. Finish exploring, then present your plan with propose_plan.' };
+      }
       if (this.mode === 'read-only') return { kind: 'deny', reason: 'File edits are disabled in read-only mode.' };
       const outside = (tool.targetPaths?.(args, this.workspace) ?? []).filter((p) => !isInside(p, this.workspace));
       if (outside.length) return { kind: 'ask', reason: `Writes outside the workspace: ${outside.join(', ')}`, sandboxed: false };
@@ -50,7 +64,7 @@ export class PermissionEngine {
 
     if (tool.kind === 'exec') {
       if (this.mode === 'full-auto') return { kind: 'allow', sandboxed: true };
-      return { kind: 'ask', reason: 'Run command', sandboxed: this.mode === 'read-only' };
+      return { kind: 'ask', reason: 'Run command', sandboxed: this.readOnly };
     }
 
     if (tool.kind === 'external') {
@@ -59,7 +73,7 @@ export class PermissionEngine {
     }
 
     // network
-    if (this.mode === 'full-auto' || this.mode === 'auto-edit') return { kind: 'allow', sandboxed: false };
+    if (this.mode === 'full-auto' || this.mode === 'auto-edit' || this.mode === 'plan') return { kind: 'allow', sandboxed: false };
     return { kind: 'ask', reason: 'Access the network', sandboxed: false };
   }
 

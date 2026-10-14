@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
 import { execFileSync } from 'node:child_process';
+import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -7,15 +8,25 @@ import {
   DaemonManager,
   McpManager,
   OllamaClient,
+  ProjectStore,
   SessionStore,
+  dataDir,
+  fuzzyFilter,
+  isInside,
+  listWorkspaceFiles,
+  loadCommands,
   loadConfig,
+  loadSkills,
   saveConfig,
   titleFrom,
   type ApprovalDecision,
   type Config,
+  type Project,
   type Session,
 } from '@openharness/core';
-import { CHANNELS, type AppState, type OpenSession } from '../shared/ipc';
+import { APP_NAME, CHANNELS, type AppState, type FileChange, type MenuAction, type OpenSession } from '../shared/ipc';
+
+app.setName(APP_NAME);
 
 fixPath();
 
@@ -25,6 +36,7 @@ let config: Config;
 let client: OllamaClient;
 const mcp = new McpManager();
 const sessions = new SessionStore();
+const projects = new ProjectStore();
 let daemons: DaemonManager;
 
 /** Live agents for open sessions, plus approvals waiting on the UI. */
@@ -66,6 +78,7 @@ async function appState(): Promise<AppState> {
     ollamaVersion: version,
     models: version ? await client.listModels().catch(() => []) : [],
     sessions: (await sessions.list()).filter((s) => !s.daemonId),
+    projects: projects.list(),
     mcp: mcp.statuses,
     home: os.homedir(),
     ...daemonState(),
@@ -89,29 +102,61 @@ function attach(session: Session) {
     maxContext: config.maxContext,
     think: config.think,
     history: session.messages,
+    checkpoints: session.checkpoints,
     extraTools: mcp.getTools(),
     approve: (req) =>
       new Promise<ApprovalDecision>((resolve) => {
         approvals.set(`${session.id}:${req.id}`, resolve);
         if (win && !win.isFocused() && Notification.isSupported()) {
-          new Notification({ title: 'openHarness needs approval', body: req.summary }).show();
+          new Notification({ title: `${APP_NAME} needs approval`, body: req.summary }).show();
         }
       }),
   });
   agent.on((event) => {
     send(CHANNELS.agentEvent, session.id, event);
-    if (event.type === 'turn_end') {
-      session.messages = agent.messages;
-      void sessions.save(session);
-    }
+    if (event.type === 'mode_changed') session.mode = event.mode;
+    if (event.type === 'turn_end' || event.type === 'mode_changed') void persist({ agent, session });
   });
   const entry = { agent, session };
   live.set(session.id, entry);
   return entry;
 }
 
-function toOpen({ agent, session }: { agent: Agent; session: Session }): OpenSession {
-  return { ...session, messages: agent.messages, running: agent.running };
+type Live = { agent: Agent; session: Session };
+
+async function persist({ agent, session }: Live): Promise<void> {
+  session.messages = agent.messages;
+  session.checkpoints = agent.checkpoints.list;
+  await sessions.save(session);
+}
+
+function toOpen({ agent, session }: Live): OpenSession {
+  const { checkpoints: _checkpoints, ...rest } = session;
+  return { ...rest, messages: agent.messages, running: agent.running, changedFiles: agent.checkpoints.changedFiles() };
+}
+
+async function readOrNull(file: string): Promise<string | null> {
+  return fs.readFile(file, 'utf8').catch(() => null);
+}
+
+async function changes({ agent, session }: Live): Promise<FileChange[]> {
+  const out: FileChange[] = [];
+  for (const file of agent.checkpoints.changedFiles()) {
+    const before = agent.checkpoints.original(file) ?? null;
+    const after = await readOrNull(file);
+    if (before === after) continue;
+    out.push({ path: file, rel: isInside(file, session.cwd) ? path.relative(session.cwd, file) : file, before, after });
+  }
+  return out;
+}
+
+/** Only ever touch a file called AGENTS.md: in a project folder, or the global one. */
+function instructionsFile(dir: string | null): string {
+  return path.join(dir ? path.resolve(dir) : dataDir(), 'AGENTS.md');
+}
+
+async function nonDaemonSessions() {
+  return (await sessions.list()).filter((s) => !s.daemonId);
 }
 
 function registerIpc(): void {
@@ -143,9 +188,55 @@ function registerIpc(): void {
     return res.canceled ? null : (res.filePaths[0] ?? null);
   });
 
-  ipcMain.handle('createSession', async (_e, opts: { cwd: string; model: string; mode: Config['mode'] }) => {
+  ipcMain.handle('revealPath', (_e, p: string) => shell.showItemInFolder(p));
+
+  ipcMain.handle('upsertProject', async (_e, p: Partial<Project> & Pick<Project, 'path'>) => {
+    await projects.upsert(p);
+    return projects.list();
+  });
+  ipcMain.handle('removeProject', async (_e, id: string) => {
+    await projects.remove(id);
+    return projects.list();
+  });
+
+  ipcMain.handle('readInstructions', (_e, dir: string | null) => readOrNull(instructionsFile(dir)).then((t) => t ?? ''));
+  ipcMain.handle('writeInstructions', async (_e, dir: string | null, content: string) => {
+    const file = instructionsFile(dir);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, content, 'utf8');
+  });
+  ipcMain.handle('listSkills', (_e, cwd: string) => loadSkills(cwd));
+  ipcMain.handle('listCommands', (_e, cwd: string) => loadCommands(cwd));
+  ipcMain.handle('listFiles', async (_e, cwd: string, query: string) => fuzzyFilter(await listWorkspaceFiles(cwd), query, 12));
+
+  ipcMain.handle('createSession', async (_e, opts: { cwd: string; model: string; mode: Config['mode']; projectId?: string }) => {
     const session = sessions.create(opts);
     return toOpen(attach(session));
+  });
+
+  ipcMain.handle('renameSession', async (_e, id: string, title: string) => {
+    const entry = live.get(id);
+    const session = entry?.session ?? (await sessions.load(id));
+    if (session && title.trim()) {
+      session.title = title.trim().slice(0, 120);
+      if (entry) await persist(entry);
+      else await sessions.save(session);
+    }
+    return nonDaemonSessions();
+  });
+
+  ipcMain.handle('rewind', async (_e, id: string, messageId: string, opts: { code: boolean; conversation: boolean }) => {
+    const entry = await getLive(id);
+    const restored = await entry.agent.rewind(messageId, opts);
+    await persist(entry);
+    return { restored, session: toOpen(entry) };
+  });
+
+  ipcMain.handle('getChanges', async (_e, id: string) => changes(await getLive(id)));
+  ipcMain.handle('revertFile', async (_e, id: string, file: string) => {
+    const entry = await getLive(id);
+    await entry.agent.checkpoints.revertFile(file);
+    return changes(entry);
   });
 
   ipcMain.handle('openSession', async (_e, id: string) => {
@@ -160,18 +251,18 @@ function registerIpc(): void {
     live.get(id)?.agent.abort();
     live.delete(id);
     await sessions.delete(id);
-    return (await sessions.list()).filter((s) => !s.daemonId);
+    return nonDaemonSessions();
   });
 
-  ipcMain.handle('listSessions', async () => (await sessions.list()).filter((s) => !s.daemonId));
+  ipcMain.handle('listSessions', () => nonDaemonSessions());
 
-  ipcMain.handle('send', async (_e, id: string, text: string, images?: string[]) => {
+  ipcMain.handle('send', async (_e, id: string, text: string, opts?: { images?: string[]; id?: string }) => {
     const entry = await getLive(id);
     if (entry.agent.running) throw new Error('The agent is still working. Stop it or wait for it to finish.');
     if (entry.session.title === 'New session') entry.session.title = titleFrom(text);
     // Persist immediately so the session appears in the sidebar.
-    await sessions.save({ ...entry.session, messages: entry.agent.messages });
-    void entry.agent.send(text, images);
+    await persist(entry);
+    void entry.agent.send(text, opts);
   });
 
   ipcMain.handle('abort', async (_e, id: string) => {
@@ -194,8 +285,7 @@ function registerIpc(): void {
       agent.setMode(patch.mode);
       session.mode = patch.mode;
     }
-    session.messages = agent.messages;
-    await sessions.save(session);
+    await persist({ agent, session });
   });
 
   ipcMain.handle('respondApproval', async (_e, id: string, requestId: string, decision: ApprovalDecision) => {
@@ -207,8 +297,7 @@ function registerIpc(): void {
   ipcMain.handle('compact', async (_e, id: string) => {
     const { agent, session } = await getLive(id);
     const removed = await agent.compactNow();
-    session.messages = agent.messages;
-    await sessions.save(session);
+    await persist({ agent, session });
     return removed;
   });
 
@@ -230,6 +319,7 @@ function createWindow(): void {
     height: 840,
     minWidth: 860,
     minHeight: 560,
+    title: APP_NAME,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 18 },
     vibrancy: 'sidebar',
@@ -261,7 +351,7 @@ function updateTray(): void {
   const unread = daemons.getInbox().filter((i) => !i.read).length;
   const running = daemons.list().filter((d) => daemons.isRunning(d.id)).length;
   tray?.setTitle(unread ? ` ${unread}` : '');
-  tray?.setToolTip(`openHarness — ${running} daemon${running === 1 ? '' : 's'} running`);
+  tray?.setToolTip(`${APP_NAME} — ${running} daemon${running === 1 ? '' : 's'} running`);
   app.dock?.setBadge(unread ? String(unread) : '');
 }
 
@@ -271,7 +361,7 @@ function createTray(): void {
   tray = new Tray(icon);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Open openHarness', click: () => (win ? win.show() : createWindow()) },
+      { label: `Open ${APP_NAME}`, click: () => (win ? win.show() : createWindow()) },
       { type: 'separator' },
       { label: 'Quit', role: 'quit' },
     ]),
@@ -279,9 +369,58 @@ function createTray(): void {
   updateTray();
 }
 
+function menuAction(action: MenuAction): void {
+  if (!win) createWindow();
+  win?.show();
+  send(CHANNELS.menu, action);
+}
+
+function createMenu(): void {
+  const isMac = process.platform === 'darwin';
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(isMac
+        ? [
+            {
+              label: APP_NAME,
+              submenu: [
+                { role: 'about' as const },
+                { type: 'separator' as const },
+                { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => menuAction('settings') },
+                { type: 'separator' as const },
+                { role: 'services' as const },
+                { type: 'separator' as const },
+                { role: 'hide' as const },
+                { role: 'hideOthers' as const },
+                { role: 'unhide' as const },
+                { type: 'separator' as const },
+                { role: 'quit' as const },
+              ],
+            },
+          ]
+        : []),
+      {
+        label: 'File',
+        submenu: [
+          { label: 'New Chat', accelerator: 'CmdOrCtrl+N', click: () => menuAction('new-chat') },
+          { label: 'Add Project…', accelerator: 'CmdOrCtrl+Shift+O', click: () => menuAction('add-project') },
+          { label: 'Search Chats', accelerator: 'CmdOrCtrl+K', click: () => menuAction('focus-search') },
+          { type: 'separator' },
+          { label: 'Toggle Plan Mode', accelerator: 'CmdOrCtrl+Shift+P', click: () => menuAction('toggle-plan') },
+          { type: 'separator' },
+          { role: 'close' },
+        ],
+      },
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      { role: 'windowMenu' },
+    ]),
+  );
+}
+
 app.whenReady().then(async () => {
-  app.setName('openHarness');
   config = await loadConfig();
+  await projects.load();
   client = new OllamaClient(config.ollamaHost);
   daemons = new DaemonManager(() => client, sessions, {
     extraTools: () => mcp.getTools(),
@@ -300,6 +439,7 @@ app.whenReady().then(async () => {
   });
 
   registerIpc();
+  createMenu();
   createWindow();
   createTray();
   void mcp.connect(config.mcpServers).then(() => {

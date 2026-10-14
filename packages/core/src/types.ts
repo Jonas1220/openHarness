@@ -8,6 +8,8 @@ export interface ToolCall {
 
 export interface Message {
   role: Role;
+  /** Stable id for user messages, used to rewind to a point in the conversation. */
+  id?: string;
   content: string;
   /** Reasoning text from thinking models. Not sent back to the model. */
   thinking?: string;
@@ -33,6 +35,7 @@ export type ToolKind = 'read' | 'write' | 'exec' | 'network' | 'external' | 'met
 
 export interface ToolContext {
   cwd: string;
+  callId: string;
   signal: AbortSignal;
   sandbox: SandboxPolicy;
   /** Session-scoped scratch state (todo list, etc). */
@@ -57,7 +60,7 @@ export interface Tool {
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult>;
 }
 
-export type PermissionMode = 'read-only' | 'ask' | 'auto-edit' | 'full-auto';
+export type PermissionMode = 'plan' | 'read-only' | 'ask' | 'auto-edit' | 'full-auto';
 
 export interface SandboxPolicy {
   enabled: boolean;
@@ -66,7 +69,8 @@ export interface SandboxPolicy {
 }
 
 export type ApprovalDecision =
-  | { kind: 'allow' }
+  /** `mode` switches the session's permission mode (used when approving a plan). */
+  | { kind: 'allow'; mode?: PermissionMode }
   | { kind: 'allow-session' }
   | { kind: 'deny'; feedback?: string };
 
@@ -94,6 +98,9 @@ export type AgentEvent =
   | { type: 'approval_request'; request: ApprovalRequest }
   | { type: 'approval_resolved'; requestId: string; decision: ApprovalDecision }
   | { type: 'todos'; todos: Todo[] }
+  | { type: 'mode_changed'; mode: PermissionMode }
+  | { type: 'checkpoint'; checkpoint: Checkpoint }
+  | { type: 'subagent_progress'; callId: string; summary: string }
   | { type: 'usage'; usage: Usage }
   | { type: 'compacted'; removedMessages: number }
   | { type: 'error'; message: string }
@@ -102,4 +109,13 @@ export type AgentEvent =
 export interface Todo {
   content: string;
   status: 'pending' | 'in_progress' | 'completed';
+}
+
+/** File contents captured before the agent first wrote to them during one user turn. */
+export interface Checkpoint {
+  /** Id of the user message that started the turn. */
+  messageId: string;
+  /** Path → content before the turn's first write (null = the file did not exist). */
+  files: Record<string, string | null>;
+  createdAt: string;
 }

@@ -1,6 +1,6 @@
 appId: dev.openharness.app
-productName: openHarness
-copyright: Copyright © 2026 openHarness contributors
+productName: Open Harness
+copyright: Copyright © 2026 Open Harness contributors
 directories:
   output: release
   buildResources: build
@@ -15,4 +15,4 @@ mac:
       arch: [arm64, x64]
   hardenedRuntime: true
 dmg:
-  artifactName: openHarness-${version}-${arch}.dmg
+  artifactName: OpenHarness-${version}-${arch}.dmg

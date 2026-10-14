@@ -1,6 +1,6 @@
 <div align="center">
 
-# openHarness
+# Open Harness
 
 **An open-source agent harness for local, open-weight models.**
 
@@ -14,9 +14,16 @@ A Mac app (and CLI) that turns any model in [Ollama](https://ollama.com) into a 
 
 - **Agent loop built for small models.** Streams answers, calls tools, feeds results back and repeats. When a model can't use Ollama's native tool calling, a text-based fallback lets it call tools anyway.
 - **A small set of tools.** `read_file`, `write_file`, `edit_file` (exact string replace), `list_dir`, `glob`, `grep`, `bash`, `todo_write` and `web_fetch`, plus any tools from **MCP** servers.
-- **Permission modes.** `read-only`, `ask`, `auto-edit` and `full-auto`. Writes outside the workspace always need your approval.
+- **Permission modes.** `plan`, `read-only`, `ask`, `auto-edit` and `full-auto`. Writes outside the workspace always need your approval. Press Shift+Tab in the composer to cycle modes.
+- **Plan mode.** The agent explores read-only, then proposes a plan. You approve it (and pick how much autonomy it gets) or tell it what to change.
+- **Projects.** Pin folders in the sidebar. Chats are grouped under their project, and each project has its own default model, default mode and `AGENTS.md` editor.
+- **Rewind and review.** Every file edit is checkpointed. Rewind a chat to any message to restore the files and conversation from that point, or open the changes panel to review diffs and revert single files.
+- **Slash commands.** Built-ins are `/init` (write an AGENTS.md), `/review`, `/explain`, `/plan`, `/compact`, `/clear` and `/rewind`. Add your own as Markdown files in `~/.openharness/commands/` or `.openharness/commands/`. Claude Code's `.claude/commands` folders are read too.
+- **@-mentions and images.** Type `@` to attach files with fuzzy completion. Paste or drop images for vision models.
+- **Skills.** `SKILL.md` folders in `~/.openharness/skills`, `~/.agents/skills`, `~/.claude/skills` or a project's `.agents/skills`. The model sees each skill's name and description, and loads the full instructions when it needs them.
+- **Subagents.** A `task` tool sends broad codebase searches to a read-only subagent, so the main conversation's context stays small.
 - **macOS sandbox.** Commands in full-auto mode run under Seatbelt (`sandbox-exec`). They can't write outside the workspace and can't reach the network.
-- **Project instructions.** Reads `AGENTS.md` and `OPENHARNESS.md`, so repos set up for other agents work as-is.
+- **Project instructions.** Reads `AGENTS.md` and `OPENHARNESS.md` from the repo, plus global instructions from `~/.openharness/AGENTS.md`. Repos set up for other agents work as-is.
 - **Context compaction.** Summarizes older history when the context window fills up, using Ollama's real token counts.
 - **Daemons.** Always-on agents with a goal, a schedule, their own memory and an inbox. They report back when something needs your attention and wait for your approval before sensitive actions.
 - **Sessions.** Saved to `~/.openharness`, so you can resume them later.
@@ -99,6 +106,17 @@ docs/research     What we learned from Codex, Claude Code and ChatGPT dots
 See [docs/research/harness-study.md](docs/research/harness-study.md) for the
 design rationale.
 
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| ⌘N | New chat (in the current project) |
+| ⇧⌘O | Add project |
+| ⌘K | Search chats |
+| ⇧⌘P / Shift+Tab | Toggle plan mode / cycle permission modes |
+| ⌘, | Settings |
+| Esc | Stop the agent |
+
 ## Daemons
 
 A daemon is an agent that keeps running after you close the chat. Give it:
@@ -107,7 +125,7 @@ A daemon is an agent that keeps running after you close the chat. Give it:
 - a **schedule** (manual, every N minutes, or daily at a set time)
 - a **workspace** folder and a **permission mode**
 
-On each run it gets its goal, its memory file and the summary of its last run. It works with the normal tools plus `report_to_user` and `update_memory`. Reports land in the **Inbox** and show up as macOS notifications. When a daemon needs approval, the request waits in the inbox for up to 30 minutes and is then denied. Closing the window keeps openHarness in the menu bar, so daemons keep running.
+On each run it gets its goal, its memory file and the summary of its last run. It works with the normal tools plus `report_to_user` and `update_memory`. Reports land in the **Inbox** and show up as macOS notifications. When a daemon needs approval, the request waits in the inbox for up to 30 minutes and is then denied. Closing the window keeps Open Harness in the menu bar, so daemons keep running.
 
 ## Contributing
 
