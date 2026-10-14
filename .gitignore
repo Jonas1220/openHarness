@@ -8,3 +8,6 @@ release/
 .env.*
 coverage/
 .vite/
+
+# Private research notes
+docs/research/agent-feature-comparison.md
