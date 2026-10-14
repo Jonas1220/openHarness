@@ -417,6 +417,13 @@ select.chip.mode-read-only {
   gap: 10px;
 }
 
+/* Messages must keep their natural height so the transcript overflows and scrolls.
+   Without this, flexbox shrinks cards with overflow: hidden (tool and approval cards) to ~0px. */
+.transcript > *,
+.page-body > * {
+  flex-shrink: 0;
+}
+
 .empty {
   margin: auto;
   text-align: center;
