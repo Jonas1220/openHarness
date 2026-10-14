@@ -10,7 +10,9 @@ import {
   OllamaClient,
   ProjectStore,
   SessionStore,
+  activeServers,
   dataDir,
+  discoverMcpServers,
   fuzzyFilter,
   isInside,
   listWorkspaceFiles,
@@ -21,10 +23,11 @@ import {
   titleFrom,
   type ApprovalDecision,
   type Config,
+  type DiscoveredServer,
   type Project,
   type Session,
 } from '@openharness/core';
-import { APP_NAME, CHANNELS, type AppState, type FileChange, type MenuAction, type OpenSession } from '../shared/ipc';
+import { APP_NAME, CHANNELS, type AppState, type FileChange, type McpServerView, type MenuAction, type OpenSession } from '../shared/ipc';
 
 app.setName(APP_NAME);
 
@@ -79,7 +82,7 @@ async function appState(): Promise<AppState> {
     models: version ? await client.listModels().catch(() => []) : [],
     sessions: (await sessions.list()).filter((s) => !s.daemonId),
     projects: projects.list(),
-    mcp: mcp.statuses,
+    mcp: await mcpViews(),
     home: os.homedir(),
     ...daemonState(),
   };
@@ -103,7 +106,7 @@ function attach(session: Session) {
     think: config.think,
     history: session.messages,
     checkpoints: session.checkpoints,
-    extraTools: mcp.getTools(),
+    extraTools: mcp.toolsFor(globalMcpIds),
     approve: (req) =>
       new Promise<ApprovalDecision>((resolve) => {
         approvals.set(`${session.id}:${req.id}`, resolve);
@@ -119,7 +122,84 @@ function attach(session: Session) {
   });
   const entry = { agent, session };
   live.set(session.id, entry);
+  void attachProjectMcp(entry);
   return entry;
+}
+
+// ---------------------------------------------------------------------------
+// MCP: own servers + servers imported from Claude Code, Codex and Claude Desktop
+// ---------------------------------------------------------------------------
+
+/** Ids of the user-scope servers every chat gets. */
+let globalMcpIds: string[] = [];
+/** Project-scope server ids per session. */
+const sessionMcpIds = new Map<string, string[]>();
+
+function projectFor(cwd: string): Project | undefined {
+  return projects.findByPath(cwd);
+}
+
+async function discover(cwd?: string): Promise<DiscoveredServer[]> {
+  return discoverMcpServers({ own: config.mcpServers, sources: config.mcpImport, cwd, approved: cwd ? projectFor(cwd)?.mcpApproved : undefined });
+}
+
+/** (Re)discover user-scope servers, connect what's new or changed, and update every live chat. */
+async function refreshMcp(): Promise<void> {
+  const active = activeServers(await discover(), config.mcpDisabled).filter((s) => s.scope === 'user');
+  globalMcpIds = active.map((s) => s.id);
+  await mcp.ensure(active);
+  const inUse = new Set([...globalMcpIds, ...[...sessionMcpIds.values()].flat()]);
+  await mcp.prune((id) => inUse.has(id));
+  for (const entry of live.values()) await attachProjectMcp(entry);
+}
+
+/** Connect the project-scoped servers for a chat's folder and give the agent all its MCP tools. */
+async function attachProjectMcp({ agent, session }: Live): Promise<void> {
+  const found = await discover(session.cwd);
+  const project = activeServers(found, config.mcpDisabled).filter((s) => s.scope === 'project');
+  await mcp.ensure(project);
+  sessionMcpIds.set(session.id, project.map((s) => s.id));
+  agent.setExtraTools(mcp.toolsFor([...globalMcpIds, ...project.map((s) => s.id)]));
+}
+
+/** Discovered servers with live status, for the settings and project pages. Secrets are not sent to the UI. */
+async function mcpViews(cwd?: string): Promise<McpServerView[]> {
+  const found = await discover(cwd);
+  return found
+    .filter((s) => (cwd ? s.scope === 'project' : s.scope === 'user'))
+    .map((s) => {
+      const st = mcp.status(s.id);
+      const disabled = config.mcpDisabled.includes(s.id) || !!s.config.disabled;
+      return {
+        id: s.id,
+        name: s.name,
+        source: s.source,
+        scope: s.scope,
+        origin: s.origin,
+        summary: summarize(s),
+        status: s.shadowedBy ? 'shadowed' : s.needsApproval ? 'needs-approval' : disabled ? 'disabled' : (st?.status ?? 'connecting'),
+        error: st?.error,
+        shadowedBy: s.shadowedBy,
+        tools: st?.tools ?? [],
+        disabledInSource: !!s.config.disabled,
+      };
+    });
+}
+
+function summarize(s: DiscoveredServer): string {
+  if (s.config.url) {
+    try {
+      const u = new URL(s.config.url);
+      return `${u.origin}${u.pathname}`;
+    } catch {
+      return 'remote server';
+    }
+  }
+  // Arguments can contain tokens: hide anything that looks like a secret.
+  const args = (s.config.args ?? []).map((a, i, all) =>
+    /^[A-Za-z0-9_\-]{24,}$/.test(a) || /(token|key|secret|password)/i.test(all[i - 1] ?? '') ? '•••' : a,
+  );
+  return [s.config.command, ...args].join(' ').slice(0, 160);
 }
 
 type Live = { agent: Agent; session: Session };
@@ -172,15 +252,33 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('saveConfig', async (_e, next: Config) => {
-    const mcpChanged = JSON.stringify(next.mcpServers) !== JSON.stringify(config.mcpServers);
     config = next;
     await saveConfig(config);
     client = new OllamaClient(config.ollamaHost);
-    if (mcpChanged) {
-      await mcp.connect(config.mcpServers);
-      for (const { agent } of live.values()) agent.setExtraTools(mcp.getTools());
-    }
+    for (const { agent } of live.values()) agent.setOptions({ maxContext: config.maxContext, think: config.think });
+    await refreshMcp();
     return appState();
+  });
+
+  ipcMain.handle('listMcp', (_e, cwd?: string) => mcpViews(cwd));
+  ipcMain.handle('refreshMcp', async (_e, cwd?: string) => {
+    await refreshMcp();
+    return mcpViews(cwd);
+  });
+  ipcMain.handle('setMcpEnabled', async (_e, id: string, enabled: boolean, cwd?: string) => {
+    const disabled = new Set(config.mcpDisabled);
+    if (enabled) disabled.delete(id);
+    else disabled.add(id);
+    config = { ...config, mcpDisabled: [...disabled] };
+    await saveConfig(config);
+    await refreshMcp();
+    return mcpViews(cwd);
+  });
+  ipcMain.handle('approveProjectMcp', async (_e, cwd: string, id: string) => {
+    const project = projectFor(cwd) ?? (await projects.upsert({ path: cwd }));
+    await projects.upsert({ ...project, mcpApproved: [...new Set([...(project.mcpApproved ?? []), id])] });
+    await refreshMcp();
+    return mcpViews(cwd);
   });
 
   ipcMain.handle('pickFolder', async () => {
@@ -250,6 +348,7 @@ function registerIpc(): void {
   ipcMain.handle('deleteSession', async (_e, id: string) => {
     live.get(id)?.agent.abort();
     live.delete(id);
+    sessionMcpIds.delete(id);
     await sessions.delete(id);
     return nonDaemonSessions();
   });
@@ -423,7 +522,7 @@ app.whenReady().then(async () => {
   await projects.load();
   client = new OllamaClient(config.ollamaHost);
   daemons = new DaemonManager(() => client, sessions, {
-    extraTools: () => mcp.getTools(),
+    extraTools: () => mcp.toolsFor(globalMcpIds),
     maxContext: () => config.maxContext,
   });
   await daemons.load();
@@ -442,9 +541,7 @@ app.whenReady().then(async () => {
   createMenu();
   createWindow();
   createTray();
-  void mcp.connect(config.mcpServers).then(() => {
-    for (const { agent } of live.values()) agent.setExtraTools(mcp.getTools());
-  });
+  void refreshMcp();
   daemons.start();
 
   app.on('activate', () => {

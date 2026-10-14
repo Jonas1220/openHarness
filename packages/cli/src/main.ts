@@ -2,7 +2,19 @@
 import readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { parseArgs } from 'node:util';
-import { Agent, McpManager, OllamaClient, PERMISSION_MODES, expandCommand, loadCommands, loadConfig, type PermissionMode } from '@openharness/core';
+import {
+  Agent,
+  McpManager,
+  OllamaClient,
+  PERMISSION_MODES,
+  SOURCE_LABELS,
+  activeServers,
+  discoverMcpServers,
+  expandCommand,
+  loadCommands,
+  loadConfig,
+  type PermissionMode,
+} from '@openharness/core';
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -48,16 +60,25 @@ async function main() {
   }
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
+  // Own MCP servers plus those configured in Claude Code, Codex and Claude Desktop.
   const mcp = new McpManager();
-  if (Object.keys(config.mcpServers).length) {
-    await mcp.connect(config.mcpServers);
-    for (const s of mcp.statuses) console.log(c.dim(`mcp ${s.name}: ${s.status}${s.error ? ` (${s.error})` : ''}`));
+  const cwd = values.cwd ?? process.cwd();
+  const servers = activeServers(
+    await discoverMcpServers({ own: config.mcpServers, sources: config.mcpImport, cwd }),
+    config.mcpDisabled,
+  );
+  if (servers.length) {
+    await mcp.ensure(servers);
+    for (const s of servers) {
+      const st = mcp.status(s.id);
+      console.log(c.dim(`mcp ${s.name} (${SOURCE_LABELS[s.source]}): ${st?.status}${st?.error ? ` — ${st.error}` : ''}`));
+    }
   }
 
   const agent = new Agent({
     client,
     model: values.model ?? config.defaultModel,
-    cwd: values.cwd ?? process.cwd(),
+    cwd,
     mode: (values.mode as PermissionMode) ?? (values.print ? 'read-only' : config.mode),
     maxContext: config.maxContext,
     think: config.think,

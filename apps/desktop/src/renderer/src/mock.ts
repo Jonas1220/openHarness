@@ -3,7 +3,7 @@
  * and previewed with `vite` alone (open http://localhost:5173 in a browser).
  * It plays back a scripted agent run; nothing touches the filesystem or Ollama.
  */
-import type { AgentEvent, DaemonDef, DaemonEvent, FileChange, InboxItem, OhApi, Project, PullProgress, SlashCommand } from '../../shared/ipc';
+import type { AgentEvent, DaemonDef, DaemonEvent, FileChange, InboxItem, McpServerView, OhApi, Project, PullProgress, SlashCommand } from '../../shared/ipc';
 
 const now = () => new Date().toISOString();
 const agentListeners = new Set<(id: string, e: AgentEvent) => void>();
@@ -48,6 +48,17 @@ const change: FileChange = {
   before: '# App\n\nA demo app.\n\n## License\nMIT\n',
   after: '# App\n\nNow with setup notes.\n\nA demo app.\n\n## License\nMIT\n',
 };
+
+let mcpServers: McpServerView[] = [
+  { id: 'codex:github', name: 'github', source: 'codex', scope: 'user', origin: '~/.codex/config.toml', summary: 'npx -y @modelcontextprotocol/server-github', status: 'connected', tools: ['search_repositories', 'create_issue', 'get_file_contents'], disabledInSource: false },
+  { id: 'claude-code:context7', name: 'context7', source: 'claude-code', scope: 'user', origin: '~/.claude.json', summary: 'https://mcp.context7.com/mcp', status: 'connected', tools: ['resolve-library-id', 'get-library-docs'], disabledInSource: false },
+  { id: 'claude-plugin:linear', name: 'linear', source: 'claude-plugin', scope: 'user', origin: 'linear plugin', summary: 'https://mcp.linear.app/mcp', status: 'needs-auth', error: 'This server requires signing in (OAuth), which Open Harness does not support yet.', tools: [], disabledInSource: false },
+  { id: 'codex:anki', name: 'anki', source: 'codex', scope: 'user', origin: '~/.codex/config.toml', summary: 'http://127.0.0.1:3141/mcp', status: 'error', error: 'Could not reach http://127.0.0.1:3141/mcp — is the server running?', tools: [], disabledInSource: false },
+  { id: 'codex:computer-use', name: 'computer-use', source: 'codex', scope: 'user', origin: '~/.codex/config.toml', summary: 'computer-use-mcp', status: 'disabled', tools: [], disabledInSource: true },
+];
+const projectMcp: McpServerView[] = [
+  { id: 'claude-code:/app:db', name: 'postgres', source: 'claude-code', scope: 'project', origin: '.mcp.json', summary: 'npx -y @modelcontextprotocol/server-postgres •••', status: 'needs-approval', tools: [], disabledInSource: false },
+];
 
 const emit = (id: string, e: AgentEvent) => agentListeners.forEach((l) => l(id, e));
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -101,7 +112,16 @@ const state = () => ({ daemons, inbox, runningDaemons: [] as string[] });
 
 const mock: OhApi = {
   init: async () => ({
-    config: { ollamaHost: 'http://127.0.0.1:11434', defaultModel: 'qwen3:8b', mode: 'ask', maxContext: 16384, think: true, mcpServers: {} },
+    config: {
+      ollamaHost: 'http://127.0.0.1:11434',
+      defaultModel: 'qwen3:8b',
+      mode: 'ask',
+      maxContext: 0,
+      think: true,
+      mcpServers: {},
+      mcpImport: { claudeCode: true, codex: true, claudeDesktop: true },
+      mcpDisabled: [],
+    },
     ollamaVersion: '0.32.1',
     models: [
       { name: 'qwen3:8b', size: 5.2e9, parameterSize: '8.2B' },
@@ -115,7 +135,7 @@ const mock: OhApi = {
     daemons,
     runningDaemons: [],
     inbox,
-    mcp: [],
+    mcp: mcpServers,
     home: '/Users/demo',
   }),
   refreshModels: async () => ({ version: '0.32.1', models: [] }),
@@ -138,6 +158,13 @@ const mock: OhApi = {
   writeInstructions: async () => {},
   listSkills: async () => [{ name: 'release-notes', description: 'Write release notes from merged PRs', dir: '', file: '/x/SKILL.md' }],
   listCommands: async () => commands,
+  listMcp: async (cwd) => (cwd ? projectMcp : mcpServers),
+  refreshMcp: async (cwd) => (cwd ? projectMcp : mcpServers),
+  setMcpEnabled: async (id, enabled, cwd) => {
+    mcpServers = mcpServers.map((s) => (s.id === id ? { ...s, status: enabled ? 'connected' : 'disabled' } : s));
+    return cwd ? projectMcp : mcpServers;
+  },
+  approveProjectMcp: async (_cwd, id) => projectMcp.map((s) => (s.id === id ? { ...s, status: 'connected', tools: ['query'] } : s)),
   listFiles: async (_cwd, q) => files.filter((f) => f.toLowerCase().includes(q.toLowerCase())),
   renameSession: async () => (await mock.init()).sessions,
   rewind: async (id) => ({ restored: [], session: { ...(await mock.openSession(id))!, messages: [] } }),

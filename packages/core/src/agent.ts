@@ -33,7 +33,7 @@ export interface AgentOptions {
   /** Extra system prompt text (daemon goal, custom instructions). */
   instructions?: string;
   maxSteps?: number;
-  /** Upper bound for the context window; the model's own limit is used if lower. */
+  /** Optional cap for the context window. 0 or unset = the model's full context. */
   maxContext?: number;
   think?: boolean;
   temperature?: number;
@@ -123,6 +123,12 @@ export class Agent {
     this.initialized = false;
   }
 
+  /** Apply changed settings; takes effect on the next model call. */
+  setOptions(patch: Partial<Pick<AgentOptions, 'maxContext' | 'think' | 'temperature'>>): void {
+    Object.assign(this.opts, patch);
+    this.initialized = false;
+  }
+
   setExtraTools(tools: Tool[]): void {
     this.opts.extraTools = tools;
     this.tools = [...(this.opts.tools ?? builtinTools()), ...tools];
@@ -148,10 +154,12 @@ export class Agent {
     try {
       const details = await this.opts.client.showModel(this.model);
       this.capabilities = details.capabilities;
-      const max = this.opts.maxContext ?? 16384;
-      this.numCtx = details.contextLength ? Math.min(details.contextLength, max) : max;
+      // Use the model's full context window unless the user set a cap.
+      const modelMax = details.contextLength ?? 8192;
+      this.numCtx = this.opts.maxContext ? Math.min(this.opts.maxContext, modelMax) : modelMax;
     } catch {
       this.capabilities = [];
+      this.numCtx = this.opts.maxContext || 8192;
     }
     if (this.capabilities.length && !this.capabilities.includes('tools')) this.textMode = true;
     const skills = this.opts.skills === false ? [] : await loadSkills(this.opts.cwd);

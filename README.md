@@ -14,6 +14,8 @@ A Mac app (and CLI) that turns any model in [Ollama](https://ollama.com) into a 
 
 - **Agent loop built for small models.** Streams answers, calls tools, feeds results back and repeats. When a model can't use Ollama's native tool calling, a text-based fallback lets it call tools anyway.
 - **A small set of tools.** `read_file`, `write_file`, `edit_file` (exact string replace), `list_dir`, `glob`, `grep`, `bash`, `todo_write` and `web_fetch`, plus any tools from **MCP** servers.
+- **Your MCP servers from Claude Code and Codex.** Open Harness reads the servers you've already set up in Claude Code (`~/.claude.json`, project `.mcp.json`, installed plugins), Codex (`~/.codex/config.toml`) and Claude Desktop. It reads them live and copies nothing. Local (stdio) and remote (HTTP/SSE) servers are supported. Servers that need an OAuth sign-in aren't supported yet.
+- **Full context window.** Every model runs with its maximum context by default. You can set a lower cap in Settings to save memory.
 - **Permission modes.** `plan`, `read-only`, `ask`, `auto-edit` and `full-auto`. Writes outside the workspace always need your approval. Press Shift+Tab in the composer to cycle modes.
 - **Plan mode.** The agent explores read-only, then proposes a plan. You approve it (and pick how much autonomy it gets) or tell it what to change.
 - **Projects.** Pin folders in the sidebar. Chats are grouped under their project, and each project has its own default model, default mode and `AGENTS.md` editor.
@@ -139,15 +141,21 @@ The model needs to be good at tool calling. These work well locally:
   "ollamaHost": "http://127.0.0.1:11434",
   "defaultModel": "qwen3:8b",
   "mode": "ask",
-  "maxContext": 16384,
+  "maxContext": 0,
   "think": true,
   "mcpServers": {
     "rea": { "command": "npx", "args": ["-y", "rea-agents@6.4.0", "mcp"] }
-  }
+  },
+  "mcpImport": { "claudeCode": true, "codex": true, "claudeDesktop": true },
+  "mcpDisabled": []
 }
 ```
 
-`mcpServers` uses the same format as Claude Desktop and Cursor. Add
+- `maxContext`: `0` means each model uses its full context window. Any other number caps it, in tokens.
+- `mcpImport`: which other agents to read MCP servers from. You can switch single servers off in Settings; they're then listed in `mcpDisabled`.
+- If a project's `.mcp.json` defines servers, they need your approval on the project page first, unless you already approved them in Claude Code.
+
+`mcpServers` uses the same format as Claude Code and Claude Desktop, for local (`command`) and remote (`"type": "http", "url"`) servers. Add
 `"trustedTools": ["tool_name"]` to a server to skip approval for read-only tools you trust.
 
 ## Architecture

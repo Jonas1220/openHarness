@@ -12,7 +12,16 @@ export { buildSystemPrompt, loadInstructions, INSTRUCTION_FILES } from './contex
 export { compact, estimateTokens } from './compaction.ts';
 export { extractTextToolCalls, textToolPrompt } from './textToolCalls.ts';
 export { builtinTools, exec, htmlToText } from './tools/index.ts';
-export { McpManager, type McpServerConfig, type McpServerStatus } from './mcp.ts';
+export { McpManager, activeServers, type McpServerConfig, type McpServerEntry, type McpServerStatus, type McpStatusKind } from './mcp.ts';
+export {
+  discoverMcpServers,
+  expandEnv,
+  DEFAULT_IMPORT_SOURCES,
+  SOURCE_LABELS,
+  type DiscoveredServer,
+  type ImportSources,
+  type McpSource,
+} from './mcpImport.ts';
 export {
   SessionStore,
   ProjectStore,

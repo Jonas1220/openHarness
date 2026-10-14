@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { Config, McpServerStatus, ModelInfo, PermissionMode, Skill } from '@openharness/core';
+import type { Config, ModelInfo, PermissionMode, Skill } from '@openharness/core';
+import type { McpServerView } from '../../../shared/ipc';
+import { McpServerList } from './McpServerList';
 import { MODES } from './ChatView';
 
 const SUGGESTED = ['qwen3:8b', 'qwen3:14b', 'qwen3-coder:30b', 'gpt-oss:20b', 'llama3.1:8b'];
@@ -7,7 +9,7 @@ const SUGGESTED = ['qwen3:8b', 'qwen3:14b', 'qwen3-coder:30b', 'gpt-oss:20b', 'l
 export function SettingsView(p: {
   config: Config;
   models: ModelInfo[];
-  mcp: McpServerStatus[];
+  mcp: McpServerView[];
   ollamaVersion: string | null;
   home: string;
   onSave: (c: Config) => Promise<void>;
@@ -16,6 +18,10 @@ export function SettingsView(p: {
   const [cfg, setCfg] = useState(p.config);
   const [mcpText, setMcpText] = useState(JSON.stringify(p.config.mcpServers, null, 2));
   const [mcpError, setMcpError] = useState('');
+  const [servers, setServers] = useState(p.mcp);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => setServers(p.mcp), [p.mcp]);
   const [pullName, setPullName] = useState('');
   const [pull, setPull] = useState<{ name: string; status: string; pct?: number } | null>(null);
   const [saved, setSaved] = useState(false);
@@ -100,13 +106,14 @@ export function SettingsView(p: {
               </select>
             </label>
             <label className="field">
-              <span>Max context (tokens)</span>
+              <span>Context limit (tokens)</span>
               <input
                 type="number"
                 step={1024}
-                min={2048}
-                value={cfg.maxContext}
-                onChange={(e) => setCfg({ ...cfg, maxContext: Math.max(2048, Number(e.target.value)) })}
+                min={0}
+                placeholder="Model maximum"
+                value={cfg.maxContext || ''}
+                onChange={(e) => setCfg({ ...cfg, maxContext: e.target.value ? Math.max(2048, Number(e.target.value)) : 0 })}
               />
             </label>
             <label className="field toggle">
@@ -114,7 +121,9 @@ export function SettingsView(p: {
               <input type="checkbox" checked={cfg.think} onChange={(e) => setCfg({ ...cfg, think: e.target.checked })} />
             </label>
           </div>
-          <p className="hint">Larger contexts use more memory. 16k–32k is a good range for 8B models on a 16 GB Mac.</p>
+          <p className="hint">
+            By default every model uses its full context window. Set a limit if long chats get slow or your Mac runs low on memory: very large windows (e.g. 128k) can need several GB of extra RAM.
+          </p>
           <label className="field">
             <span>Default permission mode</span>
             <select value={cfg.mode} onChange={(e) => setCfg({ ...cfg, mode: e.target.value as PermissionMode })}>
@@ -199,23 +208,59 @@ export function SettingsView(p: {
         </section>
 
         <section className="form">
-          <h3>MCP servers</h3>
-          <p className="hint">
-            Same format as Claude Desktop's <code>mcpServers</code>. Add <code>"trustedTools": [...]</code> to skip approval for read-only tools.
-          </p>
-          <textarea className="code" rows={10} value={mcpText} onChange={(e) => setMcpText(e.target.value)} spellCheck={false} />
-          {mcpError && <div className="notice error">{mcpError}</div>}
-          <ul className="models">
-            {p.mcp.map((s) => (
-              <li key={s.name}>
-                <strong>{s.name}</strong>
-                <span className={`pill ${s.status === 'connected' ? 'ok' : s.status === 'error' ? 'bad' : ''}`}>
-                  {s.status === 'connected' ? `${s.tools.length} tools` : s.status}
-                </span>
-                {s.error && <span className="hint">{s.error}</span>}
-              </li>
+          <div className="section-head">
+            <h3>MCP servers</h3>
+            <button
+              className="btn"
+              disabled={refreshing}
+              onClick={async () => {
+                setRefreshing(true);
+                try {
+                  setServers(await window.oh.refreshMcp());
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+            >
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+          <p className="hint">Use the MCP servers you already set up in other agents. They're read live, so changes you make there show up here after a refresh.</p>
+          <div className="row import-sources">
+            {(
+              [
+                ['claudeCode', 'Claude Code (incl. plugins)'],
+                ['codex', 'Codex'],
+                ['claudeDesktop', 'Claude Desktop'],
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} className="check">
+                <input type="checkbox" checked={cfg.mcpImport[key]} onChange={(e) => setCfg({ ...cfg, mcpImport: { ...cfg.mcpImport, [key]: e.target.checked } })} />
+                {label}
+              </label>
             ))}
-          </ul>
+          </div>
+          <McpServerList
+            servers={servers}
+            empty="No MCP servers found. Add one below, or set some up in Claude Code or Codex."
+            onToggle={async (id, enabled) => {
+              const next = await window.oh.setMcpEnabled(id, enabled);
+              setServers(next);
+              setCfg((c) => ({ ...c, mcpDisabled: enabled ? c.mcpDisabled.filter((x) => x !== id) : [...c.mcpDisabled, id] }));
+            }}
+          />
+          <p className="hint">
+            Servers that need a browser sign-in (OAuth), like the claude.ai connectors, can't be shared yet. Project servers from a repository's <code>.mcp.json</code> are listed on the project page.
+          </p>
+          <details className="own-servers" open={Object.keys(p.config.mcpServers).length > 0}>
+            <summary>Your own servers (JSON)</summary>
+            <p className="hint">
+              Same format as Claude Code's <code>mcpServers</code>: <code>{'{"name": {"command": "…", "args": []}}'}</code> or <code>{'{"name": {"type": "http", "url": "…"}}'}</code>. Add{' '}
+              <code>"trustedTools": [...]</code> to skip approval for read-only tools.
+            </p>
+            <textarea className="code" rows={8} value={mcpText} onChange={(e) => setMcpText(e.target.value)} spellCheck={false} />
+            {mcpError && <div className="notice error">{mcpError}</div>}
+          </details>
         </section>
       </div>
     </div>

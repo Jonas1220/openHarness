@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { McpServerConfig } from './mcp.ts';
+import { DEFAULT_IMPORT_SOURCES, type ImportSources } from './mcpImport.ts';
 import type { Checkpoint, Message, PermissionMode } from './types.ts';
 
 export function dataDir(): string {
@@ -13,23 +14,36 @@ export interface Config {
   ollamaHost: string;
   defaultModel: string;
   mode: PermissionMode;
+  /** Cap for the context window in tokens. 0 = always use the model's full context. */
   maxContext: number;
   think: boolean;
   mcpServers: Record<string, McpServerConfig>;
+  /** Use MCP servers configured in Claude Code, Codex and Claude Desktop. */
+  mcpImport: ImportSources;
+  /** Ids of discovered MCP servers the user switched off. */
+  mcpDisabled: string[];
 }
 
 export const DEFAULT_CONFIG: Config = {
   ollamaHost: 'http://127.0.0.1:11434',
   defaultModel: 'qwen3:8b',
   mode: 'ask',
-  maxContext: 16384,
+  maxContext: 0,
   think: true,
   mcpServers: {},
+  mcpImport: DEFAULT_IMPORT_SOURCES,
+  mcpDisabled: [],
 };
 
 export async function loadConfig(): Promise<Config> {
   const raw = await readJson<Partial<Config>>(path.join(dataDir(), 'config.json'));
-  return { ...DEFAULT_CONFIG, ...raw, mcpServers: { ...(raw?.mcpServers ?? {}) } };
+  return {
+    ...DEFAULT_CONFIG,
+    ...raw,
+    mcpServers: { ...(raw?.mcpServers ?? {}) },
+    mcpImport: { ...DEFAULT_IMPORT_SOURCES, ...(raw?.mcpImport ?? {}) },
+    mcpDisabled: raw?.mcpDisabled ?? [],
+  };
 }
 
 export async function saveConfig(config: Config): Promise<void> {
@@ -62,6 +76,8 @@ export interface Project {
   /** Defaults for new chats in this project. */
   model?: string;
   mode?: PermissionMode;
+  /** Project MCP servers (from the repo's .mcp.json) the user approved. */
+  mcpApproved?: string[];
 }
 
 /** Projects are pinned workspace folders that group chats, like in Codex and Claude Code. */

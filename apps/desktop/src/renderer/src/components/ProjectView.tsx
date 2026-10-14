@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ModelInfo, PermissionMode, Project, SessionMeta, Skill } from '@openharness/core';
+import type { McpServerView } from '../../../shared/ipc';
 import { MODES } from './ChatView';
+import { McpServerList } from './McpServerList';
 
 /** Project settings: defaults for new chats, the project's AGENTS.md, skills, and its chats. */
 export function ProjectView(p: {
@@ -16,6 +18,7 @@ export function ProjectView(p: {
   const [instructions, setInstructions] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [servers, setServers] = useState<McpServerView[]>([]);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -23,6 +26,7 @@ export function ProjectView(p: {
     setDirty(false);
     void window.oh.readInstructions(p.project.path).then(setInstructions);
     void window.oh.listSkills(p.project.path).then(setSkills);
+    void window.oh.listMcp(p.project.path).then(setServers);
   }, [p.project.id]);
 
   const save = async () => {
@@ -115,6 +119,23 @@ export function ProjectView(p: {
               No skills found. Add folders with a <code>SKILL.md</code> to <code>.agents/skills/</code> in this project or <code>~/.openharness/skills/</code>.
             </p>
           )}
+        </section>
+
+        <section>
+          <h3>Project MCP servers</h3>
+          <p className="hint">
+            From this folder's <code>.mcp.json</code> and Claude Code's per-project servers. They're only available in this project's chats. Your global servers are in Settings.
+          </p>
+          <McpServerList
+            servers={servers}
+            empty="This project has no MCP servers of its own."
+            onToggle={async (id, enabled) => setServers(await window.oh.setMcpEnabled(id, enabled, p.project.path))}
+            onApprove={async (id) => {
+              if (confirm('Approve this MCP server? It will run on your Mac with your permissions. Only approve servers from repositories you trust.')) {
+                setServers(await window.oh.approveProjectMcp(p.project.path, id));
+              }
+            }}
+          />
         </section>
 
         <section>

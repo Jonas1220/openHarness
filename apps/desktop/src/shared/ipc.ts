@@ -6,6 +6,7 @@ import type {
   DaemonEvent,
   InboxItem,
   McpServerStatus,
+  McpSource,
   Message,
   ModelInfo,
   PermissionMode,
@@ -18,6 +19,7 @@ import type {
 } from '@openharness/core';
 
 export type {
+  McpSource,
   AgentEvent,
   ApprovalDecision,
   Config,
@@ -47,8 +49,25 @@ export interface AppState {
   daemons: DaemonDef[];
   runningDaemons: string[];
   inbox: InboxItem[];
-  mcp: McpServerStatus[];
+  mcp: McpServerView[];
   home: string;
+}
+
+/** A discovered MCP server as shown in the UI (no headers, env or other secrets). */
+export interface McpServerView {
+  id: string;
+  name: string;
+  source: McpSource;
+  scope: 'user' | 'project';
+  origin: string;
+  /** Command line or URL, with secret-looking arguments masked. */
+  summary: string;
+  status: McpServerStatus['status'] | 'shadowed' | 'needs-approval';
+  error?: string;
+  shadowedBy?: string;
+  tools: string[];
+  /** Switched off in the tool it was imported from (e.g. `enabled = false` in Codex). */
+  disabledInSource: boolean;
 }
 
 export interface OpenSession extends Omit<Session, 'checkpoints'> {
@@ -84,6 +103,11 @@ export interface OhApi {
   listSkills(cwd: string): Promise<Skill[]>;
   listCommands(cwd: string): Promise<SlashCommand[]>;
   listFiles(cwd: string, query: string): Promise<string[]>;
+  /** User-scope servers, or the project servers for `cwd`. */
+  listMcp(cwd?: string): Promise<McpServerView[]>;
+  refreshMcp(cwd?: string): Promise<McpServerView[]>;
+  setMcpEnabled(id: string, enabled: boolean, cwd?: string): Promise<McpServerView[]>;
+  approveProjectMcp(cwd: string, id: string): Promise<McpServerView[]>;
 
   createSession(opts: { cwd: string; model: string; mode: PermissionMode; projectId?: string }): Promise<OpenSession>;
   openSession(id: string): Promise<OpenSession | null>;
