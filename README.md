@@ -48,21 +48,77 @@ cd openHarness && npm install
 npm run dev
 ```
 
-The last command starts the desktop app in development mode. To build a `.dmg`:
+That opens the app. See [Usage](#usage) for production builds, DMGs and the CLI.
+
+## Usage
+
+Run every command from the repository root.
+
+### Development mode
+
+```bash
+npm run dev
+```
+
+This opens the app with hot reload: changes to the UI appear right away, and the app restarts when the main process or `packages/core` changes. Stop it with Ctrl+C.
+
+To work on the UI in a normal browser, without Electron or Ollama, run the command below and open the URL it prints. When there's no Electron backend, the UI runs on a scripted mock (`apps/desktop/src/renderer/src/mock.ts`).
+
+```bash
+npx vite apps/desktop/src/renderer
+```
+
+### Production mode
+
+Build the optimized app:
+
+```bash
+npm run build
+```
+
+Then run the built version, which is the same code that ships in the DMG:
+
+```bash
+npm run preview -w @openharness/desktop
+```
+
+### Build a DMG
 
 ```bash
 npm run dist
 ```
 
-The DMG lands in `apps/desktop/release/`. Builds aren't signed yet, so the first time you open the app, right-click it and choose **Open**.
+This builds the app and packages it for Apple Silicon (arm64) and Intel (x64). The DMGs are written to `apps/desktop/release/`, for example `OpenHarness-0.1.0-arm64.dmg`. The version number comes from `version` in `apps/desktop/package.json`.
 
-Or use the CLI:
+For a faster build that only targets Apple Silicon:
+
+```bash
+cd apps/desktop && npx electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg --arm64
+```
+
+Builds aren't code-signed yet. To install one, open the DMG and drag Open Harness into Applications. The first time you open the app, right-click it and choose **Open**.
+
+### CLI
+
+The same agent also runs in the terminal:
 
 ```bash
 npm run cli -- -m qwen3:8b
 ```
 
-### Which models work well?
+Run it with `--help` to see the options. `-p "prompt"` runs a single prompt and exits.
+
+### Tests
+
+```bash
+npm test
+```
+
+```bash
+npm run typecheck
+```
+
+## Models
 
 The model needs to be good at tool calling. These work well locally:
 
@@ -129,9 +185,7 @@ On each run it gets its goal, its memory file and the summary of its last run. I
 
 ## Contributing
 
-Issues and PRs are welcome. Run `npm test` and `npm run typecheck` before you open a PR.
-
-To work on the UI without Electron or Ollama, run `npx vite apps/desktop/src/renderer` and open the URL it prints in a browser. When the preload API is missing, the UI uses a scripted mock backend (`src/renderer/src/mock.ts`).
+Issues and PRs are welcome. Run `npm test` and `npm run typecheck` before you open a PR. For UI work, the browser mode under [Development mode](#development-mode) is the quickest loop.
 
 ## License
 
