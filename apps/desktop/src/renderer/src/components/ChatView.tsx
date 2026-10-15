@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { modelLabel } from '../models';
 import type { ApprovalDecision, ModelInfo, PermissionMode, SlashCommand, Todo } from '@openharness/core';
 import type { ChatItem } from '../chatItems';
 import { Markdown } from './Markdown';
@@ -36,6 +37,9 @@ export interface ChatViewProps {
   onClear: () => void;
   onRewind: (messageId: string) => void;
   onToggleChanges: () => void;
+  /** Git worktree: offered for new chats in a git repo; shown as a branch chip once active. */
+  worktree?: { available: boolean; enabled: boolean; branch?: string; path?: string };
+  onToggleWorktree?: () => void;
   /** Present once the chat exists. */
   onFork?: () => void;
   onExport?: () => void;
@@ -64,11 +68,26 @@ export function ChatView(p: ChatViewProps) {
             <button className="chip" onClick={p.onPickFolder} disabled={!p.canChangeFolder} title={p.cwd}>
               <span className="chip-icon">▣</span> {folderName}
             </button>
+            {p.worktree?.branch ? (
+              <button className="chip on" title={`Working in its own git worktree:\n${p.worktree.path}\nClick to show in Finder`} onClick={() => p.worktree?.path && void window.oh.revealPath(p.worktree.path)}>
+                ⎇ {p.worktree.branch}
+              </button>
+            ) : (
+              p.worktree?.available && (
+                <button
+                  className={`chip ${p.worktree.enabled ? 'on' : ''}`}
+                  onClick={p.onToggleWorktree}
+                  title="Work in a separate git worktree on a new branch, so this chat can't collide with other chats or your own edits"
+                >
+                  ⎇ {p.worktree.enabled ? 'New worktree' : 'Worktree'}
+                </button>
+              )
+            )}
             <select className="chip" value={p.model} onChange={(e) => p.onModel(e.target.value)} disabled={p.readOnlyTranscript}>
-              {!p.models.some((m) => m.name === p.model) && <option value={p.model}>{p.model}</option>}
+              {!p.models.some((m) => m.name === p.model) && <option value={p.model}>{modelLabel(p.model)}</option>}
               {p.models.map((m) => (
                 <option key={m.name} value={m.name}>
-                  {m.name}
+                  {modelLabel(m.name)}
                 </option>
               ))}
             </select>

@@ -1,4 +1,4 @@
-import type { OllamaClient } from './ollama.ts';
+import type { ModelClient } from './providers.ts';
 import type { Message } from './types.ts';
 
 const COMPACT_PROMPT = `Your conversation is about to run out of context. Write a handoff summary so that you can continue the work with only this summary and the latest messages.
@@ -26,7 +26,7 @@ export function estimateTokens(messages: Message[]): number {
  * and the most recent messages. Never splits an assistant tool call from its results.
  */
 export async function compact(
-  client: OllamaClient,
+  client: ModelClient,
   model: string,
   messages: Message[],
   opts: { keepRecent?: number; numCtx?: number; signal?: AbortSignal } = {},

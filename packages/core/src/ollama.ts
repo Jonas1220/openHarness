@@ -3,6 +3,8 @@ import type { Message, Tool, ToolCall } from './types.ts';
 export interface ModelInfo {
   name: string;
   size: number;
+  /** Display name of the provider for non-Ollama models. */
+  provider?: string;
   parameterSize?: string;
   family?: string;
   modifiedAt?: string;
@@ -172,7 +174,7 @@ export class OllamaError extends Error {
   }
 
   get toolsUnsupported(): boolean {
-    return /does not support tools/i.test(this.message);
+    return /(does not|doesn't) support tools|tools? (are |is )?not supported|unsupported.{0,20}tool/i.test(this.message);
   }
 }
 

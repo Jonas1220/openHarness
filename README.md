@@ -4,7 +4,7 @@
 
 **An open-source agent harness for local, open-weight models.**
 
-A Mac app (and CLI) that turns any model in [Ollama](https://ollama.com) into a coding and computer agent, like Codex or Claude Code but fully local. Its always-on **Daemons** keep working toward a goal in the background.
+A Mac app (and CLI) that turns local models from [Ollama](https://ollama.com), LM Studio, llama.cpp or vLLM, and hosted models via OpenRouter, into a coding and computer agent, like Codex or Claude Code but local-first. Its always-on **Daemons** keep working toward a goal in the background.
 
 </div>
 
@@ -27,7 +27,9 @@ A Mac app (and CLI) that turns any model in [Ollama](https://ollama.com) into a 
 - **Slash commands.** Built-ins are `/init` (write an AGENTS.md), `/review`, `/commit`, `/pr`, `/explain`, `/plan`, `/compact`, `/clear`, `/rewind`, `/fork` and `/export`. Add your own as Markdown files in `~/.openharness/commands/` or `.openharness/commands/`. Claude Code's `.claude/commands` folders are read too.
 - **@-mentions and images.** Type `@` to attach files with fuzzy completion. Paste or drop images for vision models.
 - **Skills.** `SKILL.md` folders in `~/.openharness/skills`, `~/.agents/skills`, `~/.claude/skills` or a project's `.agents/skills`. The model sees each skill's name and description, and loads the full instructions when it needs them.
-- **Subagents.** A `task` tool sends broad codebase searches to a read-only subagent, so the main conversation's context stays small.
+- **Subagents.** The `task` tool hands work to a subagent with its own context. Research subagents are read-only and keep the main context small. General subagents can edit and run commands under your permissions; their approvals show up in your chat and their edits can be rewound with the turn. Several subagents run in parallel.
+- **Git worktrees.** Click ⎇ before your first message (or `openharness --worktree`) and the chat gets its own checkout on a new `oh/…` branch, so parallel chats never collide. Deleting the chat removes the checkout but keeps the branch.
+- **Model providers.** Besides Ollama, any OpenAI-compatible server: LM Studio, llama.cpp, vLLM, Jan or OpenRouter. Add them in Settings; their models appear as `model · provider`.
 - **macOS sandbox.** Commands in full-auto mode run under Seatbelt (`sandbox-exec`). They can't write outside the workspace and can't reach the network.
 - **Project instructions.** Reads `AGENTS.md` and `OPENHARNESS.md` from the repo, plus global instructions from `~/.openharness/AGENTS.md`. Repos set up for other agents work as-is.
 - **Context compaction.** Summarizes older history when the context window fills up, using Ollama's real token counts.
@@ -153,6 +155,10 @@ The model needs to be good at tool calling. These work well locally:
   "mcpImport": { "claudeCode": true, "codex": true, "claudeDesktop": true },
   "mcpDisabled": [],
   "toolSearch": "auto",
+  "providers": [
+    { "id": "lmstudio", "name": "LM Studio", "baseUrl": "http://localhost:1234/v1" },
+    { "id": "openrouter", "name": "OpenRouter", "baseUrl": "https://openrouter.ai/api/v1", "apiKey": "env:OPENROUTER_API_KEY" }
+  ],
   "hooks": {
     "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "npm run lint --silent" }] }]
   }
@@ -161,6 +167,7 @@ The model needs to be good at tool calling. These work well locally:
 
 - `maxContext`: `0` means each model uses its full context window. Any other number caps it, in tokens.
 - `mcpImport`: which other agents to read MCP servers from. You can switch single servers off in Settings; they're then listed in `mcpDisabled`.
+- `providers`: OpenAI-compatible servers. Refer to their models as `<id>::<model>`, e.g. `lmstudio::qwen3-8b` or `openrouter::qwen/qwen3-coder`. `apiKey` can be `env:NAME`.
 - `toolSearch`: `auto` loads MCP tools on demand once there are more than 10; `on` always does; `off` sends every tool every time.
 - `hooks`: Claude Code's format. Each hook gets the event as JSON on stdin (`tool_name`, `tool_input`, `tool_response`, `prompt`). Exit code 2 blocks and sends stderr to the agent. JSON output with `hookSpecificOutput.permissionDecision` (`allow`, `deny` or `ask`) controls approvals. A `Stop` hook that blocks sends the agent back to work, at most 3 times.
 - If a project's `.mcp.json` defines servers, they need your approval on the project page first, unless you already approved them in Claude Code.

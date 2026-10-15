@@ -7,6 +7,8 @@ import {
   McpManager,
   OllamaClient,
   PERMISSION_MODES,
+  RoutingClient,
+  createWorktree,
   SOURCE_LABELS,
   activeServers,
   discoverMcpServers,
@@ -30,9 +32,10 @@ Usage:
   openharness [options] [prompt]
 
 Options:
-  -m, --model <name>   Ollama model (default from ~/.openharness/config.json)
+  -m, --model <name>   Model: an Ollama name (qwen3:8b) or provider::model (lmstudio::qwen3-8b)
   -C, --cwd <dir>      Working directory (default: current directory)
       --mode <mode>    ${PERMISSION_MODES.map((m) => m.id).join(' | ')}
+  -w, --worktree       Work in a new git worktree on its own branch
   -p, --print          Run the prompt once, print the answer, and exit
   -h, --help           Show this help
 
@@ -46,6 +49,7 @@ async function main() {
       model: { type: 'string', short: 'm' },
       cwd: { type: 'string', short: 'C' },
       mode: { type: 'string' },
+      worktree: { type: 'boolean', short: 'w' },
       print: { type: 'boolean', short: 'p' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -53,16 +57,25 @@ async function main() {
   if (values.help) return console.log(HELP);
 
   const config = await loadConfig();
-  const client = new OllamaClient(config.ollamaHost);
-  if (!(await client.version())) {
-    console.error(c.red(`Ollama is not reachable at ${client.host}. Start it with \`ollama serve\`.`));
+  const ollama = new OllamaClient(config.ollamaHost);
+  const client = new RoutingClient(ollama, config.providers);
+  const model = values.model ?? config.defaultModel;
+  if (!model.includes('::') && !(await ollama.version())) {
+    console.error(c.red(`Ollama is not reachable at ${ollama.host}. Start it with \`ollama serve\`.`));
     process.exit(1);
   }
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
   // Own MCP servers plus those configured in Claude Code, Codex and Claude Desktop.
   const mcp = new McpManager();
-  const cwd = values.cwd ?? process.cwd();
+  let cwd = values.cwd ?? process.cwd();
+  let writableRoots: string[] | undefined;
+  if (values.worktree) {
+    const wt = await createWorktree(cwd, positionals.join(' ').slice(0, 40) || undefined);
+    console.log(c.dim(`worktree ${wt.path} on branch ${wt.branch}`));
+    cwd = wt.cwd;
+    writableRoots = [wt.gitDir];
+  }
   const servers = activeServers(
     await discoverMcpServers({ own: config.mcpServers, sources: config.mcpImport, cwd }),
     config.mcpDisabled,
@@ -77,7 +90,8 @@ async function main() {
 
   const agent = new Agent({
     client,
-    model: values.model ?? config.defaultModel,
+    model,
+    writableRoots,
     cwd,
     mode: (values.mode as PermissionMode) ?? (values.print ? 'read-only' : config.mode),
     maxContext: config.maxContext,

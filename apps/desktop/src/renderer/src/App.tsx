@@ -28,6 +28,7 @@ interface ChatState {
   running: boolean;
   usage: { used: number; window: number } | null;
   daemonId?: string;
+  worktree?: { branch: string; path: string };
   changed: Set<string>;
   changesVersion: number;
 }
@@ -37,6 +38,8 @@ interface Draft {
   model: string;
   mode: PermissionMode;
   projectId?: string;
+  /** Start the chat in its own git worktree. */
+  worktree?: boolean;
 }
 
 const LAST_CWD = 'oh:lastCwd';
@@ -66,6 +69,7 @@ export function App() {
   const [showChanges, setShowChanges] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(JSON.parse(storage.get(COLLAPSED) ?? '[]') as string[]));
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [draftIsGit, setDraftIsGit] = useState(false);
   const chats = useRef(new Map<string, ChatState>());
   const daemonRuns = useRef(new Map<string, string>());
   const searchRef = useRef<HTMLInputElement>(null);
@@ -105,6 +109,16 @@ export function App() {
   }, []);
 
   useEffect(() => window.oh.onAgentEvent(handleEvent), [handleEvent]);
+
+  // Worktrees are only offered when the new chat's folder is inside a git repository.
+  useEffect(() => {
+    if (!draft) return;
+    let stale = false;
+    void window.oh.isGitRepo(draft.cwd).then((yes) => !stale && setDraftIsGit(yes));
+    return () => {
+      stale = true;
+    };
+  }, [draft?.cwd]);
 
   useEffect(
     () =>
@@ -206,7 +220,14 @@ export function App() {
   const send = async (text: string, opts?: { images?: string[]; display?: string }) => {
     let id = view.kind === 'chat' ? view.sessionId : null;
     if (!id) {
-      const s = await window.oh.createSession(draft);
+      const title = (opts?.display ?? text).split('\n')[0]!.slice(0, 40);
+      let s;
+      try {
+        s = await window.oh.createSession({ ...draft, worktree: !!draft.worktree && draftIsGit, title });
+      } catch (e) {
+        alert(`Could not create the worktree: ${(e as Error).message}`);
+        return;
+      }
       chats.current.set(s.id, fromSession(s));
       id = s.id;
       setView({ kind: 'chat', sessionId: id });
@@ -275,7 +296,10 @@ export function App() {
           className="nav-delete"
           title="Delete chat"
           onClick={async () => {
-            if (!confirm(`Delete "${s.title}"?`)) return;
+            const warn = s.worktree
+              ? `\n\nIts worktree (${s.worktree.path}) will be removed, including uncommitted changes. The branch ${s.worktree.branch} is kept.`
+              : '';
+            if (!confirm(`Delete "${s.title}"?${warn}`)) return;
             const sessions = await window.oh.deleteSession(s.id);
             chats.current.delete(s.id);
             setApp({ ...app, sessions });
@@ -401,7 +425,7 @@ export function App() {
             .
           </div>
         )}
-        {app.ollamaVersion && !app.models.length && view.kind === 'chat' && (
+        {!app.models.length && app.ollamaVersion && view.kind === 'chat' && (
           <div className="banner">
             No models installed yet.{' '}
             <button className="link" onClick={() => setView({ kind: 'settings' })}>
@@ -424,6 +448,12 @@ export function App() {
             running={current?.running ?? false}
             usage={current?.usage ?? null}
             canChangeFolder={!current}
+            worktree={
+              current
+                ? current.worktree && { available: true, enabled: true, branch: current.worktree.branch, path: current.worktree.path }
+                : { available: draftIsGit, enabled: !!draft.worktree }
+            }
+            onToggleWorktree={() => setDraft({ ...draft, worktree: !draft.worktree })}
             readOnlyTranscript={!!current?.daemonId}
             changedCount={current?.changed.size ?? 0}
             showChanges={showChanges && !!current}
@@ -549,6 +579,7 @@ export function App() {
             models={app.models}
             mcp={app.mcp}
             ollamaVersion={app.ollamaVersion}
+            providerErrors={app.providerErrors}
             home={app.home}
             onSave={async (c) => setApp(await window.oh.saveConfig(c))}
             onRefreshModels={async () => setApp({ ...app, ...(await refresh()) })}
@@ -559,9 +590,9 @@ export function App() {
   );
 }
 
-async function refresh(): Promise<Pick<AppState, 'ollamaVersion' | 'models'>> {
+async function refresh(): Promise<Pick<AppState, 'ollamaVersion' | 'models' | 'providerErrors'>> {
   const r = await window.oh.refreshModels();
-  return { ollamaVersion: r.version, models: r.models };
+  return { ollamaVersion: r.version, models: r.models, providerErrors: r.providerErrors };
 }
 
 function pickModel(s: AppState, preferred?: string): string {
@@ -589,6 +620,7 @@ function fromSession(s: OpenSession): ChatState {
     items: itemsFromMessages(s.messages),
     running: s.running,
     daemonId: s.daemonId,
+    worktree: s.worktree && { branch: s.worktree.branch, path: s.worktree.path },
     changed: new Set(s.changedFiles),
   };
 }

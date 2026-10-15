@@ -123,11 +123,14 @@ const mock: OhApi = {
       mcpDisabled: [],
       toolSearch: 'auto',
       hooks: {},
+      providers: [{ id: 'lmstudio', name: 'LM Studio', baseUrl: 'http://localhost:1234/v1' }],
     },
+    providerErrors: {},
     ollamaVersion: '0.32.1',
     models: [
       { name: 'qwen3:8b', size: 5.2e9, parameterSize: '8.2B' },
       { name: 'qwen2.5:7b', size: 4.7e9, parameterSize: '7.6B' },
+      { name: 'lmstudio::qwen3-coder-30b', size: 0, provider: 'LM Studio' },
     ],
     sessions: [
       { id: 's0', title: 'Explain the build setup', cwd: '/Users/demo/projects/app', model: 'qwen3:8b', mode: 'ask', createdAt: now(), updatedAt: now(), projectId: 'p1' },
@@ -140,7 +143,9 @@ const mock: OhApi = {
     mcp: mcpServers,
     home: '/Users/demo',
   }),
-  refreshModels: async () => ({ version: '0.32.1', models: [] }),
+  refreshModels: async () => ({ version: '0.32.1', models: (await mock.init()).models, providerErrors: {} }),
+  isGitRepo: async () => true,
+  worktreeStatus: async () => ({ changedFiles: 2, commits: 1 }),
   pullModel: async (name) => {
     for (let i = 0; i <= 10; i++) {
       pullListeners.forEach((l) => l(name, { status: 'downloading', total: 100, completed: i * 10 }));
@@ -186,7 +191,19 @@ const mock: OhApi = {
   rewind: async (id) => ({ restored: [], session: { ...(await mock.openSession(id))!, messages: [] } }),
   getChanges: async () => [change],
   revertFile: async () => [],
-  createSession: async (o) => ({ id: `s${Date.now()}`, title: 'New session', ...o, createdAt: now(), updatedAt: now(), messages: [], running: false, changedFiles: [] }),
+  createSession: async ({ worktree, title: _t, ...o }) => ({
+    id: `s${Date.now()}`,
+    title: 'New session',
+    ...o,
+    ...(worktree
+      ? { worktree: { cwd: '/Users/demo/.openharness/worktrees/app-1a2b3c', path: '/Users/demo/.openharness/worktrees/app-1a2b3c', branch: 'oh/fix-login-1a2b3c', base: 'main', repo: o.cwd, gitDir: `${o.cwd}/.git` } }
+      : {}),
+    createdAt: now(),
+    updatedAt: now(),
+    messages: [],
+    running: false,
+    changedFiles: [],
+  }),
   openSession: async (id) => ({
     id,
     title: 'Explain the build setup',

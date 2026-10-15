@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { McpServerConfig } from './mcp.ts';
+import type { ProviderConfig } from './providers.ts';
+import type { WorktreeInfo } from './worktrees.ts';
 import type { HooksConfig } from './hooks.ts';
 import { DEFAULT_IMPORT_SOURCES, type ImportSources } from './mcpImport.ts';
 import type { ToolSearchSetting } from './toolSearch.ts';
@@ -28,6 +30,8 @@ export interface Config {
   toolSearch: ToolSearchSetting;
   /** Lifecycle hooks, in Claude Code's format. */
   hooks: HooksConfig;
+  /** OpenAI-compatible model servers (LM Studio, llama.cpp, vLLM, OpenRouter, …). */
+  providers: ProviderConfig[];
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -41,6 +45,7 @@ export const DEFAULT_CONFIG: Config = {
   mcpDisabled: [],
   toolSearch: 'auto',
   hooks: {},
+  providers: [],
 };
 
 export async function loadConfig(): Promise<Config> {
@@ -52,11 +57,13 @@ export async function loadConfig(): Promise<Config> {
     mcpImport: { ...DEFAULT_IMPORT_SOURCES, ...(raw?.mcpImport ?? {}) },
     mcpDisabled: raw?.mcpDisabled ?? [],
     hooks: raw?.hooks ?? {},
+    providers: raw?.providers ?? [],
   };
 }
 
 export async function saveConfig(config: Config): Promise<void> {
-  await writeJson(path.join(dataDir(), 'config.json'), config);
+  // The config can hold provider API keys: keep it readable by the user only.
+  await writeJson(path.join(dataDir(), 'config.json'), config, 0o600);
 }
 
 export interface SessionMeta {
@@ -70,6 +77,8 @@ export interface SessionMeta {
   /** Set for sessions that belong to a daemon run. */
   daemonId?: string;
   projectId?: string;
+  /** Set when the chat works in its own git worktree. */
+  worktree?: WorktreeInfo;
 }
 
 export interface Session extends SessionMeta {
@@ -199,10 +208,10 @@ export async function readJson<T>(file: string): Promise<T | null> {
 }
 
 /** Atomic write: write to a temp file, then rename. */
-export async function writeJson(file: string, value: unknown): Promise<void> {
+export async function writeJson(file: string, value: unknown, mode?: number): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+  await fs.writeFile(tmp, JSON.stringify(value, null, 2), { encoding: 'utf8', mode });
   await fs.rename(tmp, file);
 }
 

@@ -31,6 +31,8 @@ const api: OhApi = {
   setMcpEnabled: invoke('setMcpEnabled'),
   approveProjectMcp: invoke('approveProjectMcp'),
   createSession: invoke('createSession'),
+  isGitRepo: invoke('isGitRepo'),
+  worktreeStatus: invoke('worktreeStatus'),
   openSession: invoke('openSession'),
   deleteSession: invoke('deleteSession'),
   renameSession: invoke('renameSession'),

@@ -9,6 +9,12 @@ import {
   McpManager,
   OllamaClient,
   ProjectStore,
+  RoutingClient,
+  createWorktree,
+  gitRoot,
+  removeWorktree,
+  worktreeStatus,
+  type ModelClient,
   SessionStore,
   activeServers,
   dataDir,
@@ -40,7 +46,20 @@ fixPath();
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let config: Config;
-let client: OllamaClient;
+let client: RoutingClient;
+/**
+ * Agents and daemons hold this stable client, which always forwards to the current one,
+ * so changing the Ollama address or model providers in Settings applies to open chats too.
+ */
+const modelClient: ModelClient = {
+  listModels: () => client.listModels(),
+  showModel: (model) => client.showModel(model),
+  chat: (req) => client.chat(req),
+};
+
+function makeClient(): RoutingClient {
+  return new RoutingClient(new OllamaClient(config.ollamaHost), config.providers);
+}
 const mcp = new McpManager();
 const sessions = new SessionStore();
 const projects = new ProjectStore();
@@ -79,11 +98,12 @@ function daemonState() {
 }
 
 async function appState(): Promise<AppState> {
-  const version = await client.version();
+  const [version, models] = await Promise.all([client.ollama.version(), client.listModels().catch(() => [])]);
   return {
     config,
     ollamaVersion: version,
-    models: version ? await client.listModels().catch(() => []) : [],
+    models,
+    providerErrors: Object.fromEntries(client.providerErrors),
     sessions: (await sessions.list()).filter((s) => !s.daemonId),
     projects: projects.list(),
     mcp: await mcpViews(),
@@ -102,7 +122,7 @@ async function getLive(id: string) {
 
 function attach(session: Session) {
   const agent = new Agent({
-    client,
+    client: modelClient,
     model: session.model,
     cwd: session.cwd,
     mode: session.mode,
@@ -113,6 +133,8 @@ function attach(session: Session) {
     sessionId: session.id,
     history: session.messages,
     checkpoints: session.checkpoints,
+    // Commits from a worktree write into the main repository's .git directory.
+    writableRoots: session.worktree ? [session.worktree.gitDir] : undefined,
     extraTools: mcp.toolsFor(globalMcpIds),
     approve: (req) =>
       new Promise<ApprovalDecision>((resolve) => {
@@ -263,18 +285,18 @@ function registerIpc(): void {
   ipcMain.handle('init', () => appState());
 
   ipcMain.handle('refreshModels', async () => {
-    const version = await client.version();
-    return { version, models: version ? await client.listModels().catch(() => []) : [] };
+    const [version, models] = await Promise.all([client.ollama.version(), client.listModels().catch(() => [])]);
+    return { version, models, providerErrors: Object.fromEntries(client.providerErrors) };
   });
 
   ipcMain.handle('pullModel', async (_e, name: string) => {
-    for await (const p of client.pull(name)) send(CHANNELS.pullProgress, name, p);
+    for await (const p of client.ollama.pull(name)) send(CHANNELS.pullProgress, name, p);
   });
 
   ipcMain.handle('saveConfig', async (_e, next: Config) => {
     config = next;
     await saveConfig(config);
-    client = new OllamaClient(config.ollamaHost);
+    client = makeClient();
     for (const { agent } of live.values()) {
       agent.setOptions({ maxContext: config.maxContext, think: config.think, toolSearch: config.toolSearch });
       agent.setHooks(config.hooks);
@@ -330,9 +352,23 @@ function registerIpc(): void {
   ipcMain.handle('listCommands', (_e, cwd: string) => loadCommands(cwd));
   ipcMain.handle('listFiles', async (_e, cwd: string, query: string) => fuzzyFilter(await listWorkspaceFiles(cwd), query, 12));
 
-  ipcMain.handle('createSession', async (_e, opts: { cwd: string; model: string; mode: Config['mode']; projectId?: string }) => {
-    const session = sessions.create(opts);
-    return toOpen(attach(session));
+  ipcMain.handle(
+    'createSession',
+    async (_e, opts: { cwd: string; model: string; mode: Config['mode']; projectId?: string; worktree?: boolean; title?: string }) => {
+      const { worktree, title, ...rest } = opts;
+      const session = sessions.create(rest);
+      if (worktree) {
+        session.worktree = await createWorktree(opts.cwd, title);
+        session.cwd = session.worktree.cwd;
+      }
+      return toOpen(attach(session));
+    },
+  );
+
+  ipcMain.handle('isGitRepo', async (_e, cwd: string) => (await gitRoot(cwd)) !== null);
+  ipcMain.handle('worktreeStatus', async (_e, id: string) => {
+    const session = live.get(id)?.session ?? (await sessions.load(id));
+    return session?.worktree ? worktreeStatus(session.worktree) : null;
   });
 
   ipcMain.handle('forkSession', async (_e, id: string) => {
@@ -416,6 +452,9 @@ function registerIpc(): void {
 
   ipcMain.handle('deleteSession', async (_e, id: string) => {
     live.get(id)?.agent.abort();
+    const session = live.get(id)?.session ?? (await sessions.load(id));
+    // The checkout goes away with the chat; its branch stays, so committed work is kept.
+    if (session?.worktree) await removeWorktree(session.worktree).catch(() => {});
     live.delete(id);
     sessionMcpIds.delete(id);
     await sessions.delete(id);
@@ -589,8 +628,8 @@ function createMenu(): void {
 app.whenReady().then(async () => {
   config = await loadConfig();
   await projects.load();
-  client = new OllamaClient(config.ollamaHost);
-  daemons = new DaemonManager(() => client, sessions, {
+  client = makeClient();
+  daemons = new DaemonManager(() => modelClient, sessions, {
     extraTools: () => mcp.toolsFor(globalMcpIds),
     maxContext: () => config.maxContext,
     agentOptions: () => ({ hooks: config.hooks, toolSearch: config.toolSearch, think: config.think }),

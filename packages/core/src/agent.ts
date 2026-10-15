@@ -5,7 +5,8 @@ import { buildSystemPrompt } from './context.ts';
 import { HookRunner, type HooksConfig } from './hooks.ts';
 import { memoryPrompt, memoryTools } from './memory.ts';
 import { expandMentions } from './mentions.ts';
-import { OllamaError, type OllamaClient } from './ollama.ts';
+import { OllamaError } from './ollama.ts';
+import type { ModelClient } from './providers.ts';
 import { PROPOSE_PLAN, PermissionEngine } from './permissions.ts';
 import { loadSkillTool, loadSkills, skillsPrompt } from './skills.ts';
 import { extractTextToolCalls, textToolPrompt } from './textToolCalls.ts';
@@ -25,7 +26,7 @@ import type {
 } from './types.ts';
 
 export interface AgentOptions {
-  client: OllamaClient;
+  client: ModelClient;
   model: string;
   cwd: string;
   mode: PermissionMode;
@@ -43,6 +44,10 @@ export interface AgentOptions {
   history?: Message[];
   /** Saved checkpoints of an earlier run of this session. */
   checkpoints?: Checkpoint[];
+  /** Share a checkpoint log with another agent (subagents record into their parent's undo history). */
+  checkpointLog?: CheckpointLog;
+  /** Extra folders sandboxed commands may write to. */
+  writableRoots?: string[];
   /** Offer the `task` tool for delegating research to a subagent (default true). */
   subagents?: boolean;
   /** Load skills from the skill folders (default true). */
@@ -88,8 +93,8 @@ export class Agent {
   constructor(private opts: AgentOptions) {
     this.model = opts.model;
     this.messages = opts.history ? [...opts.history] : [];
-    this.permissions = new PermissionEngine(opts.mode, opts.cwd);
-    this.checkpoints = new CheckpointLog(opts.checkpoints ?? []);
+    this.permissions = new PermissionEngine(opts.mode, opts.cwd, opts.writableRoots);
+    this.checkpoints = opts.checkpointLog ?? new CheckpointLog(opts.checkpoints ?? []);
     this.tools = [...(opts.tools ?? builtinTools()), ...(opts.extraTools ?? [])];
     this.setHooks(opts.hooks);
   }
@@ -292,7 +297,21 @@ export class Agent {
         return 'done';
       }
 
-      for (const call of assistant.toolCalls) {
+      const calls = assistant.toolCalls;
+      for (let i = 0; i < calls.length; i++) {
+        // Consecutive task calls are independent subagents: run them in parallel.
+        let j = i;
+        while (j < calls.length && calls[j]!.name === 'task') j++;
+        if (j - i > 1) {
+          const batch = calls.slice(i, j);
+          const results = await Promise.all(batch.map((c) => this.runTool(c, signal)));
+          batch.forEach((c, k) => this.pushToolResult(c, results[k]!));
+          if (results.some((r) => r.stopTurn)) return 'done';
+          i = j - 1;
+          continue;
+        }
+
+        const call = calls[i]!;
         if (signal.aborted) {
           this.pushToolResult(call, { output: 'Interrupted by user.', isError: true });
           continue;
@@ -483,51 +502,78 @@ export class Agent {
     return restored;
   }
 
-  /** A `task` tool that hands a self-contained research question to a read-only subagent. */
+  /**
+   * The `task` tool hands a self-contained job to a subagent with its own context.
+   * - research: read-only tools, no approvals, returns a report (cheap on the main context)
+   * - general: the parent's tools and permission mode; its tool calls and approval requests
+   *   appear in the parent's chat, and its edits go into the parent's undo history
+   * Several task calls in one turn run in parallel.
+   */
   private taskTool(): Tool {
     return {
       name: 'task',
       kind: 'read',
       description:
-        'Delegate a self-contained research task to a subagent with read-only tools (read_file, list_dir, glob, grep). Use it to search a large codebase without filling your own context. Give a complete, specific prompt; you get back only its final report.',
+        'Delegate a self-contained job to a subagent with its own context. kind "research" (default): read-only tools, for searching and understanding code without filling your context. kind "general": can also edit files and run commands, for independent pieces of implementation work. Give complete, specific instructions; you only get back its final report. Call task several times in one message to run subagents in parallel.',
       parameters: {
         type: 'object',
         properties: {
           description: { type: 'string', description: 'Three to five word label for the task.' },
-          prompt: { type: 'string', description: 'Full instructions for the subagent, including what to report back.' },
+          prompt: { type: 'string', description: 'Full instructions, including what to report back.' },
+          kind: { type: 'string', enum: ['research', 'general'], description: 'research (read-only, default) or general (can edit and run commands).' },
         },
         required: ['prompt'],
       },
-      describe: (a) => `Subagent: ${a.description ?? String(a.prompt ?? '').slice(0, 60)}`,
+      describe: (a) => `Subagent${a.kind === 'general' ? '' : ' (research)'}: ${a.description ?? String(a.prompt ?? '').slice(0, 60)}`,
       run: async (args, ctx) => {
-        const readOnly = builtinTools().filter((t) => ['read_file', 'list_dir', 'glob', 'grep'].includes(t.name));
+        const general = args.kind === 'general';
+        const label = String(args.description ?? 'subagent').slice(0, 40);
+        const readOnlyMode = this.mode === 'plan' || this.mode === 'read-only';
         const child = new Agent({
           client: this.opts.client,
           model: this.model,
           cwd: this.opts.cwd,
-          mode: 'read-only',
-          tools: readOnly,
+          mode: general && !readOnlyMode ? this.mode : 'read-only',
+          tools: general
+            ? builtinTools()
+            : builtinTools().filter((t) => ['read_file', 'list_dir', 'glob', 'grep'].includes(t.name)),
+          extraTools: general ? this.opts.extraTools : undefined,
           subagents: false,
           skills: false,
           memory: false,
-          maxSteps: 25,
+          maxSteps: general ? 40 : 25,
           maxContext: this.opts.maxContext,
           think: this.opts.think,
-          instructions:
-            'You are a subagent doing focused research for another agent. Investigate with your tools, then reply with a concise report: findings, relevant file paths with line numbers, and open questions. Do not ask the user anything.',
-          approve: async () => ({ kind: 'deny', feedback: 'Subagents cannot request approval.' }),
+          hooks: this.opts.hooks,
+          sessionId: this.opts.sessionId,
+          writableRoots: this.opts.writableRoots,
+          checkpointLog: this.checkpoints,
+          toolSearch: this.opts.toolSearch,
+          instructions: general
+            ? 'You are a subagent working on one part of a larger task for another agent. Do the work with your tools, verify it where possible, then reply with a concise report: what you changed (file paths), how you verified it, and anything left open. Do not ask the user questions.'
+            : 'You are a subagent doing focused research for another agent. Investigate with your tools, then reply with a concise report: findings, relevant file paths with line numbers, and open questions. Do not ask the user anything.',
+          approve: general
+            ? (req) => this.opts.approve({ ...req, summary: `[${label}] ${req.summary}` })
+            : async () => ({ kind: 'deny', feedback: 'Research subagents cannot request approval.' }),
         });
         let report = '';
         let error = '';
         child.on((e) => {
-          if (e.type === 'tool_call') ctx.emit({ type: 'subagent_progress', callId: ctx.callId, summary: e.summary });
+          if (e.type === 'tool_call') {
+            ctx.emit({ type: 'subagent_progress', callId: ctx.callId, summary: e.summary });
+            // General subagents show their calls in the chat so their approvals can be answered there.
+            if (general) ctx.emit({ ...e, summary: `↳ ${label}: ${e.summary}` });
+          }
+          if (general && (e.type === 'tool_result' || e.type === 'approval_request' || e.type === 'approval_resolved' || e.type === 'checkpoint')) {
+            ctx.emit(e);
+          }
           if (e.type === 'assistant_message' && e.message.content.trim()) report = e.message.content.trim();
           if (e.type === 'error') error = e.message;
         });
         const onAbort = () => child.abort();
         ctx.signal.addEventListener('abort', onAbort, { once: true });
         try {
-          await child.send(String(args.prompt ?? ''));
+          await child.send(String(args.prompt ?? ''), { id: this.turnId });
         } finally {
           ctx.signal.removeEventListener('abort', onAbort);
         }

@@ -27,6 +27,8 @@ export class PermissionEngine {
   constructor(
     public mode: PermissionMode,
     public workspace: string,
+    /** Extra folders sandboxed commands may write to, e.g. the main repo's .git for a worktree. */
+    public extraWritableRoots: string[] = [],
   ) {}
 
   /** Modes in which the workspace must not change. */
@@ -37,7 +39,7 @@ export class PermissionEngine {
   sandboxPolicy(): SandboxPolicy {
     return {
       enabled: this.mode === 'full-auto' || this.readOnly,
-      writableRoots: this.readOnly ? [] : [this.workspace],
+      writableRoots: this.readOnly ? [] : [this.workspace, ...this.extraWritableRoots],
       allowNetwork: false,
     };
   }

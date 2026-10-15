@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { modelLabel } from '../models';
 import type { ModelInfo, PermissionMode, Project, SessionMeta, Skill } from '@openharness/core';
 import type { McpServerView } from '../../../shared/ipc';
 import { MODES } from './ChatView';
@@ -78,7 +79,9 @@ export function ProjectView(p: {
               <select value={draft.model ?? ''} onChange={(e) => setDraft({ ...draft, model: e.target.value || undefined })}>
                 <option value="">Use global default</option>
                 {p.models.map((m) => (
-                  <option key={m.name}>{m.name}</option>
+                  <option key={m.name} value={m.name}>
+                    {modelLabel(m.name)}
+                  </option>
                 ))}
               </select>
             </label>

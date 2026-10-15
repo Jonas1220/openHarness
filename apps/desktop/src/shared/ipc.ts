@@ -44,6 +44,8 @@ export interface AppState {
   config: Config;
   ollamaVersion: string | null;
   models: ModelInfo[];
+  /** Model providers that couldn't be reached, by provider id. */
+  providerErrors: Record<string, string>;
   sessions: SessionMeta[];
   projects: Project[];
   daemons: DaemonDef[];
@@ -89,7 +91,7 @@ export interface FileChange {
 /** The API the preload script exposes on `window.oh`. */
 export interface OhApi {
   init(): Promise<AppState>;
-  refreshModels(): Promise<{ version: string | null; models: ModelInfo[] }>;
+  refreshModels(): Promise<{ version: string | null; models: ModelInfo[]; providerErrors: Record<string, string> }>;
   pullModel(name: string): Promise<void>;
   saveConfig(config: Config): Promise<AppState>;
   pickFolder(): Promise<string | null>;
@@ -109,7 +111,10 @@ export interface OhApi {
   setMcpEnabled(id: string, enabled: boolean, cwd?: string): Promise<McpServerView[]>;
   approveProjectMcp(cwd: string, id: string): Promise<McpServerView[]>;
 
-  createSession(opts: { cwd: string; model: string; mode: PermissionMode; projectId?: string }): Promise<OpenSession>;
+  /** With `worktree`, the chat gets its own git worktree and branch (`title` names the branch). */
+  createSession(opts: { cwd: string; model: string; mode: PermissionMode; projectId?: string; worktree?: boolean; title?: string }): Promise<OpenSession>;
+  isGitRepo(cwd: string): Promise<boolean>;
+  worktreeStatus(sessionId: string): Promise<{ changedFiles: number; commits: number } | null>;
   openSession(id: string): Promise<OpenSession | null>;
   deleteSession(id: string): Promise<SessionMeta[]>;
   renameSession(id: string, title: string): Promise<SessionMeta[]>;

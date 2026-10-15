@@ -5,10 +5,20 @@ export { loadCommands, expandCommand, UI_COMMANDS, PROMPT_COMMANDS, type SlashCo
 export { loadSkills, skillDirs, type Skill } from './skills.ts';
 export { expandMentions, stripAttachments, listWorkspaceFiles, fuzzyFilter } from './mentions.ts';
 export { parseFrontmatter } from './frontmatter.ts';
+export { createWorktree, removeWorktree, worktreeStatus, gitRoot, type WorktreeInfo } from './worktrees.ts';
 export { HookRunner, HOOK_EVENTS, type HookEvent, type HooksConfig, type HookOutcome } from './hooks.ts';
 export { memoryFile, readMemory, writeMemory, memoryTools, type MemoryScope } from './memory.ts';
 export { rankTools, useToolSearch, AUTO_THRESHOLD, type ToolSearchSetting } from './toolSearch.ts';
 export { OllamaClient, OllamaError, type ModelInfo, type ModelDetails, type PullProgress } from './ollama.ts';
+export {
+  OpenAICompatClient,
+  RoutingClient,
+  PROVIDER_PRESETS,
+  MODEL_SEPARATOR,
+  parseModelRef,
+  type ModelClient,
+  type ProviderConfig,
+} from './providers.ts';
 export { PermissionEngine, PERMISSION_MODES, PROPOSE_PLAN, isInside, ruleKeys } from './permissions.ts';
 export { buildSeatbeltProfile, wrapCommand, isSandboxSupported } from './sandbox.ts';
 export { buildSystemPrompt, loadInstructions, INSTRUCTION_FILES } from './context.ts';

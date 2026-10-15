@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { modelLabel } from '../models';
 import type { DaemonDef, DaemonSchedule, InboxItem, ModelInfo, PermissionMode } from '@openharness/core';
 import { MODES } from './ChatView';
 import { InboxList } from './InboxView';
@@ -171,9 +172,11 @@ export function DaemonView(p: {
             <label className="field grow">
               <span>Model</span>
               <select value={draft.model} onChange={(e) => set('model', e.target.value)}>
-                {!p.models.some((m) => m.name === draft.model) && <option>{draft.model}</option>}
+                {!p.models.some((m) => m.name === draft.model) && <option value={draft.model}>{modelLabel(draft.model)}</option>}
                 {p.models.map((m) => (
-                  <option key={m.name}>{m.name}</option>
+                  <option key={m.name} value={m.name}>
+                    {modelLabel(m.name)}
+                  </option>
                 ))}
               </select>
             </label>

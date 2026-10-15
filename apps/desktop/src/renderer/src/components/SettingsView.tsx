@@ -1,8 +1,17 @@
 import { useEffect, useState } from 'react';
-import type { Config, ModelInfo, PermissionMode, Skill } from '@openharness/core';
+import { modelLabel } from '../models';
+import type { Config, ModelInfo, PermissionMode, ProviderConfig, Skill } from '@openharness/core';
 import type { McpServerView } from '../../../shared/ipc';
 import { McpServerList } from './McpServerList';
 import { MODES } from './ChatView';
+
+const PRESETS: ProviderConfig[] = [
+  { id: 'lmstudio', name: 'LM Studio', baseUrl: 'http://localhost:1234/v1' },
+  { id: 'llamacpp', name: 'llama.cpp server', baseUrl: 'http://localhost:8080/v1' },
+  { id: 'vllm', name: 'vLLM', baseUrl: 'http://localhost:8000/v1' },
+  { id: 'jan', name: 'Jan', baseUrl: 'http://localhost:1337/v1' },
+  { id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
+];
 
 const SUGGESTED = ['qwen3:8b', 'qwen3:14b', 'qwen3-coder:30b', 'gpt-oss:20b', 'llama3.1:8b'];
 
@@ -11,6 +20,7 @@ export function SettingsView(p: {
   models: ModelInfo[];
   mcp: McpServerView[];
   ollamaVersion: string | null;
+  providerErrors: Record<string, string>;
   home: string;
   onSave: (c: Config) => Promise<void>;
   onRefreshModels: () => void;
@@ -24,6 +34,7 @@ export function SettingsView(p: {
   const [userMemory, setUserMemory] = useState('');
   const [userMemoryDirty, setUserMemoryDirty] = useState(false);
   const [browserNote, setBrowserNote] = useState('');
+  const [newProvider, setNewProvider] = useState<ProviderConfig>({ ...PRESETS[0]!, apiKey: '' });
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => setServers(p.mcp), [p.mcp]);
@@ -117,9 +128,11 @@ export function SettingsView(p: {
             <label className="field grow">
               <span>Default model</span>
               <select value={cfg.defaultModel} onChange={(e) => setCfg({ ...cfg, defaultModel: e.target.value })}>
-                {!p.models.some((m) => m.name === cfg.defaultModel) && <option>{cfg.defaultModel}</option>}
+                {!p.models.some((m) => m.name === cfg.defaultModel) && <option value={cfg.defaultModel}>{modelLabel(cfg.defaultModel)}</option>}
                 {p.models.map((m) => (
-                  <option key={m.name}>{m.name}</option>
+                  <option key={m.name} value={m.name}>
+                    {modelLabel(m.name)}
+                  </option>
                 ))}
               </select>
             </label>
@@ -157,7 +170,7 @@ export function SettingsView(p: {
         <section className="form">
           <h3>Models</h3>
           <ul className="models">
-            {p.models.map((m) => (
+            {p.models.filter((m) => !m.provider).map((m) => (
               <li key={m.name}>
                 <strong>{m.name}</strong>
                 <span>
@@ -165,7 +178,7 @@ export function SettingsView(p: {
                 </span>
               </li>
             ))}
-            {!p.models.length && <li className="hint">No models installed.</li>}
+            {!p.models.some((m) => !m.provider) && <li className="hint">No Ollama models installed.</li>}
           </ul>
           <div className="row">
             <input className="grow" placeholder="Model to download, e.g. qwen3:8b" value={pullName} onChange={(e) => setPullName(e.target.value)} />
@@ -190,6 +203,71 @@ export function SettingsView(p: {
               )}
             </div>
           )}
+        </section>
+
+        <section className="form">
+          <h3>Model providers</h3>
+          <p className="hint">
+            Besides Ollama, Open Harness can use any OpenAI-compatible server: LM Studio, llama.cpp, vLLM, Jan, or OpenRouter for hosted models. Their models appear in every model menu as
+            <code> model · provider</code>. Keys are stored in <code>~/.openharness/config.json</code> (readable only by you); write <code>env:NAME</code> to read a key from an environment variable instead.
+          </p>
+          <ul className="models">
+            {cfg.providers.map((prov) => {
+              const count = p.models.filter((m) => m.name.startsWith(`${prov.id}::`)).length;
+              const error = p.providerErrors[prov.id];
+              return (
+                <li key={prov.id}>
+                  <strong>{prov.name}</strong>
+                  <span>{prov.baseUrl}</span>
+                  <span className={`pill ${error ? 'bad' : count ? 'ok' : ''}`} title={error}>
+                    {error ? 'Not reachable' : p.config.providers.some((x) => x.id === prov.id) ? `${count} model${count === 1 ? '' : 's'}` : 'Save to connect'}
+                  </span>
+                  <button className="link danger" onClick={() => setCfg({ ...cfg, providers: cfg.providers.filter((x) => x.id !== prov.id) })}>
+                    Remove
+                  </button>
+                </li>
+              );
+            })}
+            {!cfg.providers.length && <li className="hint">Only Ollama is set up.</li>}
+          </ul>
+          <div className="row">
+            <label className="field">
+              <span>Type</span>
+              <select
+                value={PRESETS.some((x) => x.id === newProvider.id) ? newProvider.id : 'custom'}
+                onChange={(e) => {
+                  const preset = PRESETS.find((x) => x.id === e.target.value);
+                  setNewProvider(preset ? { ...preset, apiKey: '' } : { id: 'custom', name: 'Custom', baseUrl: 'http://localhost:8000/v1', apiKey: '' });
+                }}
+              >
+                {PRESETS.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+                <option value="custom">Other OpenAI-compatible server</option>
+              </select>
+            </label>
+            <label className="field grow">
+              <span>Base URL</span>
+              <input value={newProvider.baseUrl} onChange={(e) => setNewProvider({ ...newProvider, baseUrl: e.target.value })} />
+            </label>
+            <label className="field grow">
+              <span>API key {newProvider.id === 'openrouter' ? '' : '(optional)'}</span>
+              <input type="password" value={newProvider.apiKey ?? ''} placeholder="sk-… or env:OPENROUTER_API_KEY" onChange={(e) => setNewProvider({ ...newProvider, apiKey: e.target.value })} />
+            </label>
+            <button
+              className="btn"
+              disabled={!newProvider.baseUrl.trim()}
+              onClick={() => {
+                let id = newProvider.id === 'custom' ? 'custom' : newProvider.id;
+                for (let n = 2; cfg.providers.some((x) => x.id === id); n++) id = `${newProvider.id}${n}`;
+                setCfg({ ...cfg, providers: [...cfg.providers, { ...newProvider, id, apiKey: newProvider.apiKey?.trim() || undefined }] });
+              }}
+            >
+              Add
+            </button>
+          </div>
         </section>
 
         <section className="form">

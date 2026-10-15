@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Agent, type AgentOptions } from './agent.ts';
-import type { OllamaClient } from './ollama.ts';
+import type { ModelClient } from './providers.ts';
 import { SessionStore, dataDir, readJson, writeJson } from './store.ts';
 import type { AgentEvent, ApprovalDecision, ApprovalRequest, PermissionMode, Tool } from './types.ts';
 
@@ -73,7 +73,7 @@ export class DaemonManager {
   private dir: string;
 
   constructor(
-    private client: () => OllamaClient,
+    private client: () => ModelClient,
     private sessions: SessionStore,
     private opts: {
       extraTools?: () => Tool[];
