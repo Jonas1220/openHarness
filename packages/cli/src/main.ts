@@ -36,6 +36,7 @@ Options:
   -C, --cwd <dir>      Working directory (default: current directory)
       --mode <mode>    ${PERMISSION_MODES.map((m) => m.id).join(' | ')}
   -w, --worktree       Work in a new git worktree on its own branch
+      --verify <cmd>   Check command after each turn with changes, e.g. "npm test"
   -p, --print          Run the prompt once, print the answer, and exit
   -h, --help           Show this help
 
@@ -50,6 +51,7 @@ async function main() {
       cwd: { type: 'string', short: 'C' },
       mode: { type: 'string' },
       worktree: { type: 'boolean', short: 'w' },
+      verify: { type: 'string' },
       print: { type: 'boolean', short: 'p' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -92,6 +94,7 @@ async function main() {
     client,
     model,
     writableRoots,
+    verify: values.verify ? { command: values.verify } : undefined,
     cwd,
     mode: (values.mode as PermissionMode) ?? (values.print ? 'read-only' : config.mode),
     maxContext: config.maxContext,

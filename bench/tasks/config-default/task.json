@@ -1,0 +1,10 @@
+{
+  "prompt": "getPort() in server.js crashes when config.json is missing, and returns undefined when the file has no \"port\". Make it return the configured port when there is one, and 3000 otherwise.",
+  "check": "node \"$TASK_DIR/check.mjs\"",
+  "timeoutSec": 300,
+  "tags": [
+    "bugfix",
+    "js",
+    "edge-cases"
+  ]
+}

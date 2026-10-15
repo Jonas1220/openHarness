@@ -1,0 +1,10 @@
+{
+  "prompt": "The test in slug.test.mjs fails (run it with `node slug.test.mjs`). Fix slug.js so the test passes. Do not change the test file.",
+  "check": "node \"$TASK_DIR/check.mjs\"",
+  "timeoutSec": 300,
+  "tags": [
+    "bugfix",
+    "js",
+    "tests"
+  ]
+}

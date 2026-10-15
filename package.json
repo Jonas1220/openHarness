@@ -18,12 +18,14 @@
     "dist": "npm run dist -w @openharness/desktop",
     "cli": "npm run start -w @openharness/cli --",
     "test": "vitest run",
-    "typecheck": "tsc -p packages/core && tsc -p packages/cli && tsc -p apps/desktop",
-    "postinstall": "node scripts/ensure-electron.mjs"
+    "typecheck": "tsc -p packages/core && tsc -p packages/cli && tsc -p apps/desktop && tsc -p bench",
+    "postinstall": "node scripts/ensure-electron.mjs",
+    "bench": "tsx bench/run.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "tsx": "^4.20.0"
   }
 }

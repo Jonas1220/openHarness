@@ -1,0 +1,10 @@
+{
+  "prompt": "parseCsvLine in csv.js splits on every comma, so quoted fields like \"Smith, John\" break. Make it handle double-quoted fields: commas inside quotes belong to the field, and \"\" inside a quoted field is a literal quote.",
+  "check": "node \"$TASK_DIR/check.mjs\"",
+  "timeoutSec": 300,
+  "tags": [
+    "bugfix",
+    "js",
+    "parsing"
+  ]
+}

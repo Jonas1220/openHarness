@@ -1,0 +1,4 @@
+{
+  "name": "todo-api",
+  "scripts": { "start": "node server.js" }
+}

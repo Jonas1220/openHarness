@@ -1,0 +1,9 @@
+{
+  "prompt": "Add a function word_count(text) to textutil.py that returns the number of words in text. Punctuation must not count as words and must not split words: \"Hello, world!\" has 2 words and \"don't stop\" has 2 words.",
+  "check": "python3 \"$TASK_DIR/check.py\"",
+  "timeoutSec": 300,
+  "tags": [
+    "feature",
+    "python"
+  ]
+}

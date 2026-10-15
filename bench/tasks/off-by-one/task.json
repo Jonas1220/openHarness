@@ -1,0 +1,9 @@
+{
+  "prompt": "sumRange(a, b) in sum.js is documented to include both a and b (sumRange(1, 3) should be 6), but it returns the wrong result. Fix it.",
+  "check": "node \"$TASK_DIR/check.mjs\"",
+  "timeoutSec": 300,
+  "tags": [
+    "bugfix",
+    "js"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "prompt": "signup.js and invite.js both contain the same email-validation regular expression. Extract it into an exported function isValidEmail(email) in validate.js and use it in both files, so the regex exists only once. Behavior must not change.",
+  "check": "node \"$TASK_DIR/check.mjs\"",
+  "timeoutSec": 300,
+  "tags": [
+    "refactor",
+    "js",
+    "multi-file"
+  ]
+}

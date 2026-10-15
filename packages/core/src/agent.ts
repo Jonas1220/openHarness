@@ -11,7 +11,7 @@ import { PROPOSE_PLAN, PermissionEngine } from './permissions.ts';
 import { loadSkillTool, loadSkills, skillsPrompt } from './skills.ts';
 import { extractTextToolCalls, textToolPrompt } from './textToolCalls.ts';
 import { deferredToolsPrompt, isDeferrable, searchToolsTool, useToolSearch, type ToolSearchSetting } from './toolSearch.ts';
-import { builtinTools } from './tools/index.ts';
+import { builtinTools, exec } from './tools/index.ts';
 import { ToolInputError } from './tools/util.ts';
 import type {
   AgentEvent,
@@ -60,6 +60,11 @@ export interface AgentOptions {
   hooks?: HooksConfig;
   /** Identifies the chat to hooks. */
   sessionId?: string;
+  /**
+   * Check command run when the agent finishes a turn in which it changed something
+   * (e.g. "npm test && npm run typecheck"). On failure the output goes back to the agent.
+   */
+  verify?: { command: string; maxRounds?: number; timeoutSec?: number };
   approve: (req: ApprovalRequest) => Promise<ApprovalDecision>;
 }
 
@@ -82,6 +87,8 @@ export class Agent {
   private activatedTools = new Set<string>();
   private hookRunner: HookRunner | null = null;
   private turnId = '';
+  /** The current turn edited files or ran commands, so verification is due. */
+  private turnChanged = false;
   private listeners = new Set<(e: AgentEvent) => void>();
   private controller: AbortController | null = null;
   private textMode = false;
@@ -162,7 +169,7 @@ export class Agent {
   }
 
   /** Apply changed settings; takes effect on the next model call. */
-  setOptions(patch: Partial<Pick<AgentOptions, 'maxContext' | 'think' | 'temperature' | 'toolSearch'>>): void {
+  setOptions(patch: Partial<Pick<AgentOptions, 'maxContext' | 'think' | 'temperature' | 'toolSearch' | 'verify'>>): void {
     Object.assign(this.opts, patch);
     this.initialized = false;
   }
@@ -240,6 +247,7 @@ export class Agent {
     const controller = (this.controller = new AbortController());
     const { signal } = controller;
     this.turnId = opts.id ?? randomUUID();
+    this.turnChanged = false;
     this.emit({ type: 'turn_start' });
     try {
       await this.init();
@@ -273,6 +281,7 @@ export class Agent {
     const maxSteps = this.opts.maxSteps ?? 60;
     const recentCalls: string[] = [];
     let stopHookRounds = 0;
+    let verifyRounds = 0;
 
     for (let step = 0; step < maxSteps; step++) {
       if (signal.aborted) return 'aborted';
@@ -283,6 +292,20 @@ export class Agent {
       this.messages.push(assistant);
       this.emit({ type: 'assistant_message', message: assistant });
       if (!assistant.toolCalls?.length) {
+        // Built-in verification: run the project's checks and send failures back to the agent.
+        const verify = this.opts.verify;
+        if (verify?.command && this.turnChanged && verifyRounds < (verify.maxRounds ?? 3) && this.mode !== 'plan' && this.mode !== 'read-only') {
+          verifyRounds++;
+          const failure = await this.runVerify(verify, signal);
+          if (failure !== null) {
+            this.turnChanged = false;
+            this.messages.push({
+              role: 'user',
+              content: `[Verify] \`${verify.command}\` failed:\n\n${failure}\n\nFix the cause (don't weaken or skip the checks), then finish.`,
+            });
+            continue;
+          }
+        }
         // A Stop hook can send the agent back to work (e.g. "tests are failing"), at most 3 times.
         if (this.hookRunner?.has('Stop') && stopHookRounds < 3) {
           const hook = await this.hookRunner.run('Stop', {}, signal);
@@ -432,6 +455,8 @@ export class Agent {
       }
     }
 
+    if (tool.kind === 'write' || tool.kind === 'exec') this.turnChanged = true;
+
     if (tool.kind === 'write' && tool.targetPaths) {
       const cp = await this.checkpoints.capture(this.turnId, tool.targetPaths(call.arguments, this.opts.cwd));
       if (cp) this.emit({ type: 'checkpoint', checkpoint: cp });
@@ -446,6 +471,25 @@ export class Agent {
       if (hook.context) result.output += `\n\n[Hook context] ${hook.context}`;
     }
     return result;
+  }
+
+  /** Run the verify command; returns null when it passes, else the tail of its output. */
+  private async runVerify(verify: NonNullable<AgentOptions['verify']>, signal: AbortSignal): Promise<string | null> {
+    this.emit({ type: 'verify', status: 'running', command: verify.command });
+    const res = await exec(['/bin/zsh', '-c', verify.command], {
+      cwd: this.opts.cwd,
+      timeoutMs: (verify.timeoutSec ?? 600) * 1000,
+      signal,
+    }).catch((err: Error) => ({ stdout: '', stderr: err.message, code: 1, timedOut: false }));
+    if (res.code === 0) {
+      this.emit({ type: 'verify', status: 'passed', command: verify.command });
+      return null;
+    }
+    const output = `${res.stdout}\n${res.stderr}`.trim();
+    const tail = output.length > 4000 ? `…${output.slice(-4000)}` : output;
+    const reason = res.timedOut ? `${tail}\n[timed out after ${verify.timeoutSec ?? 600}s]` : tail;
+    this.emit({ type: 'verify', status: 'failed', command: verify.command, output: reason });
+    return reason || `exit code ${res.code}`;
   }
 
   private reportHookErrors(event: string, errors: string[]): void {

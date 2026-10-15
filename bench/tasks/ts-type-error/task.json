@@ -1,0 +1,9 @@
+{
+  "prompt": "This TypeScript project does not compile (run tsc to see the error). Fix the code properly; do not use `any`, `@ts-ignore` or type casts.",
+  "check": "\"$OH_ROOT/node_modules/.bin/tsc\" -p . --noEmit && ! grep -REn \"(: any|as any|@ts-ignore|@ts-expect-error| as [A-Z])\" src",
+  "timeoutSec": 300,
+  "tags": [
+    "bugfix",
+    "typescript"
+  ]
+}

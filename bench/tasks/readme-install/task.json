@@ -1,0 +1,8 @@
+{
+  "prompt": "Add an \"Installation\" section (a \"## Installation\" heading) to README.md that tells users how to install and start the project, based on the scripts in package.json.",
+  "check": "node \"$TASK_DIR/check.mjs\"",
+  "timeoutSec": 300,
+  "tags": [
+    "docs"
+  ]
+}

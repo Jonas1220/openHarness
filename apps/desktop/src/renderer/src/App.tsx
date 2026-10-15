@@ -229,6 +229,7 @@ export function App() {
         return;
       }
       chats.current.set(s.id, fromSession(s));
+      if (s.notice) chats.current.get(s.id)!.items.push({ kind: 'notice', id: uid(), text: s.notice, tone: 'info' });
       id = s.id;
       setView({ kind: 'chat', sessionId: id });
     }

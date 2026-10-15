@@ -1,0 +1,8 @@
+{
+  "prompt": "Change the greeting in hello.txt to 'Hello, world' and commit the change with a commit message that starts with 'docs:'.",
+  "check": "test \"$(cat hello.txt)\" = \"Hello, world\" && git log -1 --format=%s | grep -q \"^docs:\" && git log -1 --name-only --format= | grep -q \"^hello.txt$\" && test -z \"$(git status --porcelain)\"",
+  "timeoutSec": 300,
+  "tags": [
+    "git"
+  ]
+}

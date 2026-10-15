@@ -1,0 +1,10 @@
+{
+  "prompt": "greet.js prints \"Hello, <name>!\". Add a --shout flag that prints the whole greeting in upper case, e.g. `node greet.js Ada --shout` prints \"HELLO, ADA!\". Without the flag the output must stay the same.",
+  "check": "node \"$TASK_DIR/check.mjs\"",
+  "timeoutSec": 300,
+  "tags": [
+    "feature",
+    "js",
+    "cli"
+  ]
+}

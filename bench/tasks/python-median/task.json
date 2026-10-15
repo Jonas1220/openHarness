@@ -1,0 +1,9 @@
+{
+  "prompt": "median() in stats.py returns wrong results for lists with an even number of items. Fix it so that it returns the mean of the two middle values in that case.",
+  "check": "python3 \"$TASK_DIR/check.py\"",
+  "timeoutSec": 300,
+  "tags": [
+    "bugfix",
+    "python"
+  ]
+}

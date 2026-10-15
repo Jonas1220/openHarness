@@ -24,6 +24,20 @@ export const DAEMON_TEMPLATES: { title: string; emoji: string; goal: string; sch
     mode: 'auto-edit',
   },
   {
+    title: 'Maintainer',
+    emoji: '🛠️',
+    goal: `Maintain this repository through pull requests. Each run:
+1. With \`gh issue list --label agent --state open\`, pick the oldest issue that has no open PR yet (check \`gh pr list\`). If there is none, stop.
+2. Read AGENTS.md and the issue. Create a worktree: \`git worktree add -b agent/issue-<number> ../<repo>-issue-<number> origin/main\` and work only inside it.
+3. Plan briefly, implement the smallest change that solves the issue, and add or update tests.
+4. Run the project's checks (see AGENTS.md, e.g. npm test && npm run typecheck). Don't open a PR while they fail.
+5. Commit, push the branch, and open a PR with \`gh pr create\` that says "Closes #<number>" and how you tested it.
+6. Report the PR link with report_to_user, and note the issue number in memory so you don't pick it again.
+Never push to main and never merge PRs: a human reviews and merges.`,
+    schedule: { kind: 'interval', minutes: 120 },
+    mode: 'auto-edit',
+  },
+  {
     title: 'TODO miner',
     emoji: '🐛',
     goal: 'Scan this project for TODO and FIXME comments. Keep a prioritized list in TODO_REPORT.md in the workspace, and report when new high-priority items appear.',

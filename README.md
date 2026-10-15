@@ -126,6 +126,16 @@ npm test
 npm run typecheck
 ```
 
+### Benchmark
+
+`bench/` holds realistic coding tasks: fix a bug, add a CLI flag, rename across files, fix a type error, commit with git, and more. Each task has an automatic check the agent never sees. Run it with any model:
+
+```bash
+npm run bench -- -m qwen3:8b
+```
+
+Results are saved to `bench/results/` and compared with the previous run of the same model, so regressions show up right away. `npm run bench -- --validate` checks the tasks themselves: every check must fail on the starting project and pass with the reference solution. `npm test` runs this validation too. To add a task, copy a folder in `bench/tasks/` and change its `task.json`, `repo/`, `solution/` and check script.
+
 ## Models
 
 The model needs to be good at tool calling. These work well locally:
@@ -207,6 +217,18 @@ A daemon is an agent that keeps running after you close the chat. Give it:
 - a **workspace** folder and a **permission mode**
 
 On each run it gets its goal, its memory file and the summary of its last run. It works with the normal tools plus `report_to_user` and `update_memory`. Reports land in the **Inbox** and show up as macOS notifications. When a daemon needs approval, the request waits in the inbox for up to 30 minutes and is then denied. Closing the window keeps Open Harness in the menu bar, so daemons keep running.
+
+## Open Harness working on itself
+
+The goal is for Open Harness to develop this repository, with a human reviewing every change:
+
+- **`AGENTS.md`** describes the repo, its commands and the rules for agents.
+- **Worktrees are enforced.** When the app runs from this repo (`npm run dev`), chats in it always get their own git worktree. An agent therefore never edits the running copy, which would restart the app mid-task.
+- **Verify step.** Set the project's verify command (on the project page) to `npm test && npm run typecheck`. When the agent finishes a turn with changes, the command runs; if it fails, the output goes back to the agent, up to 3 times. In the CLI, use `--verify "<cmd>"`.
+- **Benchmark.** `npm run bench` measures whether changes to the harness actually help.
+- **Maintainer Daemon.** A template that picks GitHub issues labeled `agent`, implements them in a worktree, runs the checks and opens a pull request. It needs `gh auth login`. Daemons never merge; you review the PRs.
+
+Small local models (7–8B) handle small, clearly scoped changes. Larger features need something like `qwen3-coder:30b`, or a stronger model added as a provider.
 
 ## Contributing
 

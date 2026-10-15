@@ -96,6 +96,8 @@ export interface Project {
   mode?: PermissionMode;
   /** Project MCP servers (from the repo's .mcp.json) the user approved. */
   mcpApproved?: string[];
+  /** Command that checks the agent's work, e.g. "npm test && npm run typecheck". */
+  verifyCommand?: string;
 }
 
 /** Projects are pinned workspace folders that group chats, like in Codex and Claude Code. */

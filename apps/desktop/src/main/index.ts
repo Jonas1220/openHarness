@@ -120,6 +120,18 @@ async function getLive(id: string) {
   return attach(session);
 }
 
+/** The repository the running app was started from (dev mode only); agents must not edit it in place. */
+let selfRepo: string | null = null;
+
+function projectForSession(session: Session): Project | undefined {
+  return (session.projectId ? projects.get(session.projectId) : undefined) ?? projectFor(session.worktree?.repo ?? session.cwd);
+}
+
+function verifyFor(session: Session) {
+  const command = projectForSession(session)?.verifyCommand?.trim();
+  return command ? { command } : undefined;
+}
+
 function attach(session: Session) {
   const agent = new Agent({
     client: modelClient,
@@ -133,6 +145,7 @@ function attach(session: Session) {
     sessionId: session.id,
     history: session.messages,
     checkpoints: session.checkpoints,
+    verify: verifyFor(session),
     // Commits from a worktree write into the main repository's .git directory.
     writableRoots: session.worktree ? [session.worktree.gitDir] : undefined,
     extraTools: mcp.toolsFor(globalMcpIds),
@@ -335,6 +348,7 @@ function registerIpc(): void {
 
   ipcMain.handle('upsertProject', async (_e, p: Partial<Project> & Pick<Project, 'path'>) => {
     await projects.upsert(p);
+    for (const { agent, session } of live.values()) agent.setOptions({ verify: verifyFor(session) });
     return projects.list();
   });
   ipcMain.handle('removeProject', async (_e, id: string) => {
@@ -357,11 +371,17 @@ function registerIpc(): void {
     async (_e, opts: { cwd: string; model: string; mode: Config['mode']; projectId?: string; worktree?: boolean; title?: string }) => {
       const { worktree, title, ...rest } = opts;
       const session = sessions.create(rest);
-      if (worktree) {
+      // `npm run dev` hot-reloads from its own repo, so an agent editing it in place would
+      // restart the app mid-task. Chats there always get a worktree.
+      const forced = !worktree && selfRepo !== null && (await gitRoot(opts.cwd)) === selfRepo;
+      if (worktree || forced) {
         session.worktree = await createWorktree(opts.cwd, title);
         session.cwd = session.worktree.cwd;
       }
-      return toOpen(attach(session));
+      const open = toOpen(attach(session));
+      return forced
+        ? { ...open, notice: `Open Harness is running from this repository, so this chat works in its own worktree on ${session.worktree!.branch}.` }
+        : open;
     },
   );
 
@@ -628,6 +648,7 @@ function createMenu(): void {
 app.whenReady().then(async () => {
   config = await loadConfig();
   await projects.load();
+  if (!app.isPackaged) selfRepo = await gitRoot(app.getAppPath());
   client = makeClient();
   daemons = new DaemonManager(() => modelClient, sessions, {
     extraTools: () => mcp.toolsFor(globalMcpIds),

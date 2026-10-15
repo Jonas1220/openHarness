@@ -102,6 +102,7 @@ export type AgentEvent =
   | { type: 'checkpoint'; checkpoint: Checkpoint }
   | { type: 'subagent_progress'; callId: string; summary: string }
   | { type: 'hook'; event: string; message: string }
+  | { type: 'verify'; status: 'running' | 'passed' | 'failed'; command: string; output?: string }
   | { type: 'usage'; usage: Usage }
   | { type: 'compacted'; removedMessages: number }
   | { type: 'error'; message: string }

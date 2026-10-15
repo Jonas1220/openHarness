@@ -73,6 +73,17 @@ export function ProjectView(p: {
               </button>
             </label>
           </div>
+          <label className="field">
+            <span>Verify command</span>
+            <input
+              value={draft.verifyCommand ?? ''}
+              placeholder="e.g. npm test && npm run typecheck"
+              onChange={(e) => setDraft({ ...draft, verifyCommand: e.target.value || undefined })}
+            />
+          </label>
+          <p className="hint">
+            Runs when the agent finishes a turn in which it changed something. If it fails, the agent gets the output and has to fix the problem (up to 3 times) before it can finish.
+          </p>
           <div className="row">
             <label className="field grow">
               <span>Default model</span>

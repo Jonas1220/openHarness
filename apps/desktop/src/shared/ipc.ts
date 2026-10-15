@@ -76,6 +76,8 @@ export interface OpenSession extends Omit<Session, 'checkpoints'> {
   running: boolean;
   /** Files the agent changed in this session (from checkpoints). */
   changedFiles: string[];
+  /** Something the user should know about how the chat was set up. */
+  notice?: string;
 }
 
 export interface FileChange {

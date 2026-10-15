@@ -96,6 +96,10 @@ export function applyEvent(items: ChatItem[], e: AgentEvent): ChatItem[] {
       return items.map((i) => (i.kind === 'tool' && i.id === e.callId ? { ...i, progress: [...(i.progress ?? []), e.summary] } : i));
     case 'hook':
       return [...items, { kind: 'notice', id: uid(), text: e.message, tone: e.message.startsWith('Hook failed') ? 'error' : 'info' }];
+    case 'verify':
+      if (e.status === 'running') return [...items, { kind: 'notice', id: uid(), text: `Checking: ${e.command}`, tone: 'info' }];
+      if (e.status === 'passed') return [...items, { kind: 'notice', id: uid(), text: '✓ Checks passed', tone: 'info' }];
+      return [...items, { kind: 'notice', id: uid(), text: '✕ Checks failed — the output went back to the agent', tone: 'error' }];
     case 'mode_changed':
       return [...items, { kind: 'notice', id: uid(), text: `Plan approved — switched to ${e.mode} mode.`, tone: 'info' }];
     case 'tool_result': {

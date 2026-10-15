@@ -1,0 +1,10 @@
+{
+  "prompt": "Rename the function calc_total in utils.js to calculateTotal, and update every place that uses it. Behavior must not change.",
+  "check": "node \"$TASK_DIR/check.mjs\"",
+  "timeoutSec": 300,
+  "tags": [
+    "refactor",
+    "js",
+    "multi-file"
+  ]
+}
