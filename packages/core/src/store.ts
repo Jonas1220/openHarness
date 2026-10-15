@@ -3,7 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { McpServerConfig } from './mcp.ts';
+import type { HooksConfig } from './hooks.ts';
 import { DEFAULT_IMPORT_SOURCES, type ImportSources } from './mcpImport.ts';
+import type { ToolSearchSetting } from './toolSearch.ts';
 import type { Checkpoint, Message, PermissionMode } from './types.ts';
 
 export function dataDir(): string {
@@ -22,6 +24,10 @@ export interface Config {
   mcpImport: ImportSources;
   /** Ids of discovered MCP servers the user switched off. */
   mcpDisabled: string[];
+  /** Load MCP tools on demand instead of sending all of them every time. */
+  toolSearch: ToolSearchSetting;
+  /** Lifecycle hooks, in Claude Code's format. */
+  hooks: HooksConfig;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -33,6 +39,8 @@ export const DEFAULT_CONFIG: Config = {
   mcpServers: {},
   mcpImport: DEFAULT_IMPORT_SOURCES,
   mcpDisabled: [],
+  toolSearch: 'auto',
+  hooks: {},
 };
 
 export async function loadConfig(): Promise<Config> {
@@ -43,6 +51,7 @@ export async function loadConfig(): Promise<Config> {
     mcpServers: { ...(raw?.mcpServers ?? {}) },
     mcpImport: { ...DEFAULT_IMPORT_SOURCES, ...(raw?.mcpImport ?? {}) },
     mcpDisabled: raw?.mcpDisabled ?? [],
+    hooks: raw?.hooks ?? {},
   };
 }
 
@@ -141,6 +150,20 @@ export class SessionStore {
     return readJson<Session>(path.join(this.dir, `${id}.json`));
   }
 
+  /**
+   * Copy a chat into a new one to explore a different direction. Checkpoints are not copied:
+   * both chats share the same files on disk, so the fork starts with its own undo history.
+   */
+  async fork(id: string): Promise<Session | null> {
+    const source = await this.load(id);
+    if (!source) return null;
+    const { id: _id, createdAt: _c, updatedAt: _u, checkpoints: _cp, ...rest } = source;
+    const fork = this.create({ ...rest, title: `${source.title} (fork)` });
+    fork.messages = source.messages;
+    await this.save(fork);
+    return fork;
+  }
+
   async delete(id: string): Promise<void> {
     if (!/^[\w-]+$/.test(id)) return;
     await fs.rm(path.join(this.dir, `${id}.json`), { force: true });
@@ -181,4 +204,23 @@ export async function writeJson(file: string, value: unknown): Promise<void> {
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
   await fs.rename(tmp, file);
+}
+
+/** Render a chat as Markdown for sharing or archiving. Attached file contents are left out. */
+export function sessionToMarkdown(session: Session): string {
+  const lines = [`# ${session.title}`, '', `- Folder: \`${session.cwd}\``, `- Model: \`${session.model}\``, `- Created: ${session.createdAt}`, ''];
+  for (const m of session.messages) {
+    if (m.role === 'system') continue;
+    if (m.role === 'user') {
+      const text = m.content.split('\n\n<attached_files>')[0]!;
+      lines.push(m.summary ? '> _Earlier messages were summarized._' : `## You\n\n${text}`, '');
+    } else if (m.role === 'assistant') {
+      if (m.content.trim()) lines.push(`## Assistant\n\n${m.content.trim()}`, '');
+      for (const c of m.toolCalls ?? []) lines.push(`> 🔧 \`${c.name}\` ${'`'}${JSON.stringify(c.arguments).slice(0, 300)}${'`'}`, '');
+    } else if (m.role === 'tool') {
+      const out = m.content.length > 1500 ? `${m.content.slice(0, 1500)}\n…` : m.content;
+      lines.push('<details><summary>Result</summary>', '', '```', out, '```', '', '</details>', '');
+    }
+  }
+  return lines.join('\n');
 }

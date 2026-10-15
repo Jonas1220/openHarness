@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Agent } from './agent.ts';
+import { Agent, type AgentOptions } from './agent.ts';
 import type { OllamaClient } from './ollama.ts';
 import { SessionStore, dataDir, readJson, writeJson } from './store.ts';
 import type { AgentEvent, ApprovalDecision, ApprovalRequest, PermissionMode, Tool } from './types.ts';
@@ -75,7 +75,14 @@ export class DaemonManager {
   constructor(
     private client: () => OllamaClient,
     private sessions: SessionStore,
-    private opts: { extraTools?: () => Tool[]; maxContext?: () => number; approvalTimeoutMs?: number; dir?: string } = {},
+    private opts: {
+      extraTools?: () => Tool[];
+      maxContext?: () => number;
+      /** Extra agent options read at the start of every run (hooks, tool search, …). */
+      agentOptions?: () => Partial<AgentOptions>;
+      approvalTimeoutMs?: number;
+      dir?: string;
+    } = {},
   ) {
     this.dir = opts.dir ?? path.join(dataDir(), 'daemons');
   }
@@ -222,12 +229,14 @@ export class DaemonManager {
     });
 
     const agent = new Agent({
+      ...this.opts.agentOptions?.(),
       client: this.client(),
       model: def.model,
       cwd: def.cwd,
       mode: def.mode,
       maxContext: this.opts.maxContext?.(),
       maxSteps: 40,
+      memory: false, // daemons keep their own memory file
       extraTools: [...this.daemonTools(def, session.id), ...(this.opts.extraTools?.() ?? [])],
       instructions: [
         PERSISTENT_RULES,

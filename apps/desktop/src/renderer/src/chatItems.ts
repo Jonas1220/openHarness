@@ -94,6 +94,8 @@ export function applyEvent(items: ChatItem[], e: AgentEvent): ChatItem[] {
       return updateTool(items, e.requestId, { status: decisionStatus(e.decision) });
     case 'subagent_progress':
       return items.map((i) => (i.kind === 'tool' && i.id === e.callId ? { ...i, progress: [...(i.progress ?? []), e.summary] } : i));
+    case 'hook':
+      return [...items, { kind: 'notice', id: uid(), text: e.message, tone: e.message.startsWith('Hook failed') ? 'error' : 'info' }];
     case 'mode_changed':
       return [...items, { kind: 'notice', id: uid(), text: `Plan approved — switched to ${e.mode} mode.`, tone: 'info' }];
     case 'tool_result': {

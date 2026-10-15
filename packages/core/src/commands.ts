@@ -17,6 +17,8 @@ export const UI_COMMANDS: SlashCommand[] = [
   { name: 'compact', description: 'Summarize the conversation to free up context', source: 'builtin' },
   { name: 'clear', description: 'Start a new chat in the same folder', source: 'builtin' },
   { name: 'rewind', description: 'Undo the last turn: restore files and conversation', source: 'builtin' },
+  { name: 'fork', description: 'Copy this chat into a new chat to try a different direction', source: 'builtin' },
+  { name: 'export', description: 'Save this chat as a Markdown file', source: 'builtin' },
 ];
 
 export const PROMPT_COMMANDS: SlashCommand[] = [
@@ -42,6 +44,30 @@ Keep it under 150 lines. Only state things you verified in the repository. $ARGU
     body: `Review the uncommitted changes in this repository. Run \`git status\` and \`git diff\` (and \`git diff --staged\`) to see them, and read surrounding code where needed.
 
 Report concrete problems only — bugs, missed edge cases, security issues, broken error handling — ordered by severity, each with file:line and a suggested fix. Do not modify any files. If the changes look correct, say so briefly. $ARGUMENTS`,
+  },
+  {
+    name: 'commit',
+    description: 'Commit the current changes with a good message',
+    source: 'builtin',
+    body: `Create a git commit for the current changes.
+
+1. Run \`git status\` and \`git diff\` (staged and unstaged) to see what changed, and \`git log --oneline -5\` to match the repository's commit message style.
+2. If you are on the default branch (main or master) and the user didn't say otherwise, create a new branch with a short descriptive name first.
+3. Stage only files that belong to this change. Never stage secrets (.env files, keys, credentials).
+4. Write a concise commit message: a short summary line, then a blank line and a few lines on what changed and why if it isn't obvious.
+5. Commit and show the result with \`git log --oneline -1\`. Do not push unless asked. $ARGUMENTS`,
+  },
+  {
+    name: 'pr',
+    description: 'Push the branch and open a pull request with gh',
+    source: 'builtin',
+    body: `Open a pull request for the current branch.
+
+1. Check \`git status\`; if there are uncommitted changes, ask whether to commit them first.
+2. Find the base branch (usually main) and review the commits and diff that the PR will contain (\`git log\` and \`git diff\` against the base).
+3. Push the branch with \`git push -u origin HEAD\`.
+4. Create the PR with \`gh pr create\`: a clear title and a description that summarizes what changed, why, and how it was tested. If \`gh\` isn't installed or logged in, tell the user what to run instead.
+5. Reply with the PR URL. $ARGUMENTS`,
   },
   {
     name: 'explain',

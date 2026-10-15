@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { CheckpointLog } from './checkpoints.ts';
 import { compact, estimateTokens } from './compaction.ts';
 import { buildSystemPrompt } from './context.ts';
+import { HookRunner, type HooksConfig } from './hooks.ts';
+import { memoryPrompt, memoryTools } from './memory.ts';
 import { expandMentions } from './mentions.ts';
 import { OllamaError, type OllamaClient } from './ollama.ts';
 import { PROPOSE_PLAN, PermissionEngine } from './permissions.ts';
 import { loadSkillTool, loadSkills, skillsPrompt } from './skills.ts';
 import { extractTextToolCalls, textToolPrompt } from './textToolCalls.ts';
+import { deferredToolsPrompt, isDeferrable, searchToolsTool, useToolSearch, type ToolSearchSetting } from './toolSearch.ts';
 import { builtinTools } from './tools/index.ts';
 import { ToolInputError } from './tools/util.ts';
 import type {
@@ -44,6 +47,14 @@ export interface AgentOptions {
   subagents?: boolean;
   /** Load skills from the skill folders (default true). */
   skills?: boolean;
+  /** Auto memory: remember/forget tools and saved facts in the prompt (default true). */
+  memory?: boolean;
+  /** Load MCP tools on demand via search_tools (default 'auto': when there are many). */
+  toolSearch?: ToolSearchSetting;
+  /** Lifecycle hooks (Claude Code format). */
+  hooks?: HooksConfig;
+  /** Identifies the chat to hooks. */
+  sessionId?: string;
   approve: (req: ApprovalRequest) => Promise<ApprovalDecision>;
 }
 
@@ -63,6 +74,8 @@ export class Agent {
   model: string;
   private tools: Tool[];
   private agentTools: Tool[] = [];
+  private activatedTools = new Set<string>();
+  private hookRunner: HookRunner | null = null;
   private turnId = '';
   private listeners = new Set<(e: AgentEvent) => void>();
   private controller: AbortController | null = null;
@@ -78,6 +91,7 @@ export class Agent {
     this.permissions = new PermissionEngine(opts.mode, opts.cwd);
     this.checkpoints = new CheckpointLog(opts.checkpoints ?? []);
     this.tools = [...(opts.tools ?? builtinTools()), ...(opts.extraTools ?? [])];
+    this.setHooks(opts.hooks);
   }
 
   get mode(): PermissionMode {
@@ -96,10 +110,29 @@ export class Agent {
     return this.numCtx;
   }
 
-  /** Tools offered to the model right now (propose_plan only exists in plan mode). */
+  /**
+   * Tools offered to the model right now: propose_plan only in plan mode, and with tool
+   * search active only the MCP tools the model has loaded via search_tools.
+   */
   get toolList(): Tool[] {
-    const all = [...this.tools, ...this.agentTools];
+    let all = [...this.tools, ...this.agentTools];
+    if (this.toolSearchActive) all = all.filter((t) => !isDeferrable(t) || this.activatedTools.has(t.name));
+    else all = all.filter((t) => t.name !== 'search_tools');
     return this.mode === 'plan' ? all : all.filter((t) => t.name !== PROPOSE_PLAN);
+  }
+
+  private get toolSearchActive(): boolean {
+    return useToolSearch(this.tools, this.opts.toolSearch);
+  }
+
+  /** MCP tools not loaded yet (only meaningful while tool search is active). */
+  private get deferredTools(): Tool[] {
+    return this.tools.filter((t) => isDeferrable(t) && !this.activatedTools.has(t.name));
+  }
+
+  setHooks(hooks: HooksConfig | undefined): void {
+    this.opts.hooks = hooks;
+    this.hookRunner = hooks && Object.keys(hooks).length ? new HookRunner(hooks, { sessionId: this.opts.sessionId ?? 'cli', cwd: this.opts.cwd }) : null;
   }
 
   on(listener: (e: AgentEvent) => void): () => void {
@@ -124,7 +157,7 @@ export class Agent {
   }
 
   /** Apply changed settings; takes effect on the next model call. */
-  setOptions(patch: Partial<Pick<AgentOptions, 'maxContext' | 'think' | 'temperature'>>): void {
+  setOptions(patch: Partial<Pick<AgentOptions, 'maxContext' | 'think' | 'temperature' | 'toolSearch'>>): void {
     Object.assign(this.opts, patch);
     this.initialized = false;
   }
@@ -163,14 +196,32 @@ export class Agent {
     }
     if (this.capabilities.length && !this.capabilities.includes('tools')) this.textMode = true;
     const skills = this.opts.skills === false ? [] : await loadSkills(this.opts.cwd);
+    const memory = this.opts.memory !== false;
     this.agentTools = [proposePlanTool];
     if (skills.length) this.agentTools.push(loadSkillTool(skills));
     if (this.opts.subagents !== false) this.agentTools.push(this.taskTool());
+    if (memory) this.agentTools.push(...memoryTools(this.opts.cwd));
+    this.agentTools.push(
+      searchToolsTool(
+        () => this.deferredTools,
+        (names) => {
+          for (const n of names) this.activatedTools.add(n);
+          if (this.textMode) this.initialized = false; // the tool list lives in the prompt
+        },
+      ),
+    );
     const system = await buildSystemPrompt({
       cwd: this.opts.cwd,
       mode: this.opts.mode,
       model: this.model,
-      extra: [this.opts.instructions, skillsPrompt(skills)].filter(Boolean).join('\n\n'),
+      extra: [
+        this.opts.instructions,
+        skillsPrompt(skills),
+        memory ? await memoryPrompt(this.opts.cwd) : '',
+        this.toolSearchActive && this.deferredTools.length ? deferredToolsPrompt(this.deferredTools) : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
       toolSection: this.textMode ? textToolPrompt(this.toolList) : undefined,
     });
     if (this.messages[0]?.role === 'system') this.messages[0] = { role: 'system', content: system };
@@ -187,7 +238,17 @@ export class Agent {
     this.emit({ type: 'turn_start' });
     try {
       await this.init();
-      const content = await expandMentions(text, this.opts.cwd);
+      let content = await expandMentions(text, this.opts.cwd);
+      if (this.hookRunner?.has('UserPromptSubmit')) {
+        const hook = await this.hookRunner.run('UserPromptSubmit', { prompt: text }, signal);
+        this.reportHookErrors('UserPromptSubmit', hook.errors);
+        if (hook.block) {
+          this.emit({ type: 'hook', event: 'UserPromptSubmit', message: `Prompt blocked by a hook: ${hook.reason ?? ''}`.trim() });
+          this.emit({ type: 'turn_end', reason: 'done' });
+          return;
+        }
+        if (hook.context) content += `\n\n<hook_context>\n${hook.context}\n</hook_context>`;
+      }
       this.messages.push({ role: 'user', id: this.turnId, content, ...(opts.images?.length ? { images: opts.images } : {}) });
       const reason = await this.loop(signal);
       this.emit({ type: 'turn_end', reason });
@@ -206,6 +267,7 @@ export class Agent {
   private async loop(signal: AbortSignal): Promise<'done' | 'aborted' | 'max_steps'> {
     const maxSteps = this.opts.maxSteps ?? 60;
     const recentCalls: string[] = [];
+    let stopHookRounds = 0;
 
     for (let step = 0; step < maxSteps; step++) {
       if (signal.aborted) return 'aborted';
@@ -215,7 +277,20 @@ export class Agent {
       const assistant = await this.callModel(signal);
       this.messages.push(assistant);
       this.emit({ type: 'assistant_message', message: assistant });
-      if (!assistant.toolCalls?.length) return 'done';
+      if (!assistant.toolCalls?.length) {
+        // A Stop hook can send the agent back to work (e.g. "tests are failing"), at most 3 times.
+        if (this.hookRunner?.has('Stop') && stopHookRounds < 3) {
+          const hook = await this.hookRunner.run('Stop', {}, signal);
+          this.reportHookErrors('Stop', hook.errors);
+          if (hook.block && hook.reason) {
+            stopHookRounds++;
+            this.emit({ type: 'hook', event: 'Stop', message: `A Stop hook asked the agent to continue: ${hook.reason}` });
+            this.messages.push({ role: 'user', content: `[Stop hook] ${hook.reason}` });
+            continue;
+          }
+        }
+        return 'done';
+      }
 
       for (const call of assistant.toolCalls) {
         if (signal.aborted) {
@@ -300,7 +375,17 @@ export class Agent {
     const summary = safeDescribe(tool, call.arguments);
     this.emit({ type: 'tool_call', call, summary });
 
-    const verdict = this.permissions.check(tool, call.arguments);
+    let verdict = this.permissions.check(tool, call.arguments);
+    if (this.hookRunner?.has('PreToolUse')) {
+      const hook = await this.hookRunner.run('PreToolUse', { toolName: tool.name, toolInput: call.arguments }, signal);
+      this.reportHookErrors('PreToolUse', hook.errors);
+      if (hook.block || hook.decision === 'deny') {
+        return { output: `Blocked by a PreToolUse hook: ${hook.reason ?? 'no reason given'}`, isError: true };
+      }
+      // A hook can skip the approval prompt or force one, but never lift a mode's hard deny.
+      if (hook.decision === 'allow' && verdict.kind === 'ask') verdict = { kind: 'allow', sandboxed: verdict.sandboxed };
+      if (hook.decision === 'ask' && verdict.kind === 'allow') verdict = { kind: 'ask', reason: hook.reason ?? 'A hook asks for approval', sandboxed: verdict.sandboxed };
+    }
     if (verdict.kind === 'deny') return { output: verdict.reason, isError: true };
     if (verdict.kind === 'ask') {
       const request: ApprovalRequest = { id: call.id, toolName: tool.name, summary, args: call.arguments, reason: verdict.reason };
@@ -334,6 +419,26 @@ export class Agent {
     }
 
     const sandbox = verdict.sandboxed ? this.permissions.sandboxPolicy() : { enabled: false, writableRoots: [], allowNetwork: true };
+    const result = await this.execute(tool, call, signal, sandbox);
+    if (this.hookRunner?.has('PostToolUse') && !signal.aborted) {
+      const hook = await this.hookRunner.run('PostToolUse', { toolName: tool.name, toolInput: call.arguments, toolResponse: result }, signal);
+      this.reportHookErrors('PostToolUse', hook.errors);
+      if (hook.block && hook.reason) result.output += `\n\n[PostToolUse hook] ${hook.reason}`;
+      if (hook.context) result.output += `\n\n[Hook context] ${hook.context}`;
+    }
+    return result;
+  }
+
+  private reportHookErrors(event: string, errors: string[]): void {
+    for (const e of errors) this.emit({ type: 'hook', event, message: `Hook failed: ${e}` });
+  }
+
+  private async execute(
+    tool: Tool,
+    call: ToolCall,
+    signal: AbortSignal,
+    sandbox: ReturnType<PermissionEngine['sandboxPolicy']>,
+  ): Promise<ToolResult> {
     try {
       return await tool.run(call.arguments, {
         cwd: this.opts.cwd,
@@ -404,6 +509,7 @@ export class Agent {
           tools: readOnly,
           subagents: false,
           skills: false,
+          memory: false,
           maxSteps: 25,
           maxContext: this.opts.maxContext,
           think: this.opts.think,

@@ -121,6 +121,8 @@ const mock: OhApi = {
       mcpServers: {},
       mcpImport: { claudeCode: true, codex: true, claudeDesktop: true },
       mcpDisabled: [],
+      toolSearch: 'auto',
+      hooks: {},
     },
     ollamaVersion: '0.32.1',
     models: [
@@ -167,6 +169,20 @@ const mock: OhApi = {
   approveProjectMcp: async (_cwd, id) => projectMcp.map((s) => (s.id === id ? { ...s, status: 'connected', tools: ['query'] } : s)),
   listFiles: async (_cwd, q) => files.filter((f) => f.toLowerCase().includes(q.toLowerCase())),
   renameSession: async () => (await mock.init()).sessions,
+  forkSession: async (id) => {
+    const s = (await mock.openSession(id))!;
+    return { ...s, id: `fork-${Date.now()}`, title: `${s.title} (fork)` };
+  },
+  exportSession: async () => '/Users/demo/Downloads/chat.md',
+  readMemory: async (scope) => (scope === 'user' ? '- Prefers concise answers\n- Uses pnpm' : '- Tests: `npm test` (needs Postgres running)\n'),
+  writeMemory: async () => {},
+  addBrowserServer: async () => {
+    mcpServers = [
+      ...mcpServers,
+      { id: 'openharness:browser', name: 'browser', source: 'openharness', scope: 'user', origin: 'config.json', summary: 'npx -y @playwright/mcp@0.0.83 --isolated', status: 'connected', tools: ['browser_navigate', 'browser_click', 'browser_snapshot'], disabledInSource: false },
+    ];
+    return { state: { ...(await mock.init()), mcp: mcpServers }, browser: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser' };
+  },
   rewind: async (id) => ({ restored: [], session: { ...(await mock.openSession(id))!, messages: [] } }),
   getChanges: async () => [change],
   revertFile: async () => [],

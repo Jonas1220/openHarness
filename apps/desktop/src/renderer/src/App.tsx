@@ -462,6 +462,28 @@ export function App() {
             }}
             onClear={() => newChat(currentProject())}
             onRewind={rewind}
+            onFork={
+              current && !current.daemonId
+                ? async () => {
+                    const fork = await window.oh.forkSession(current.id);
+                    if (!fork) return;
+                    chats.current.set(fork.id, fromSession(fork));
+                    refreshSessions();
+                    setShowChanges(false);
+                    setView({ kind: 'chat', sessionId: fork.id });
+                  }
+                : undefined
+            }
+            onExport={
+              current
+                ? async () => {
+                    const file = await window.oh.exportSession(current.id);
+                    if (!file) return;
+                    current.items = [...current.items, { kind: 'notice', id: uid(), text: `Exported to ${file}`, tone: 'info' }];
+                    rerender();
+                  }
+                : undefined
+            }
           />
         )}
 

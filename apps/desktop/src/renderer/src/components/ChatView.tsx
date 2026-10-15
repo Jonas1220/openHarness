@@ -36,6 +36,9 @@ export interface ChatViewProps {
   onClear: () => void;
   onRewind: (messageId: string) => void;
   onToggleChanges: () => void;
+  /** Present once the chat exists. */
+  onFork?: () => void;
+  onExport?: () => void;
 }
 
 export function ChatView(p: ChatViewProps) {
@@ -83,6 +86,16 @@ export function ChatView(p: ChatViewProps) {
               ))}
             </select>
             {p.usage && <ContextMeter used={p.usage.used} window={p.usage.window} onCompact={p.onCompact} />}
+            {p.onFork && (
+              <button className="chip icon" onClick={p.onFork} title="Fork: continue in a copy of this chat (/fork)">
+                ⑂
+              </button>
+            )}
+            {p.onExport && (
+              <button className="chip icon" onClick={p.onExport} title="Export as Markdown (/export)">
+                ⇩
+              </button>
+            )}
             {p.changedCount > 0 && (
               <button className={`chip ${p.showChanges ? 'on' : ''}`} onClick={p.onToggleChanges} title="Files changed in this chat">
                 ± {p.changedCount}
@@ -123,6 +136,8 @@ export function ChatView(p: ChatViewProps) {
             onClear={p.onClear}
             onMode={p.onMode}
             onRewindLast={() => lastUser && p.onRewind(lastUser.id)}
+            onFork={p.onFork}
+            onExport={p.onExport}
           />
         )}
       </div>
@@ -361,6 +376,8 @@ function Composer(p: {
   onClear: () => void;
   onMode: (m: PermissionMode) => void;
   onRewindLast: () => void;
+  onFork?: () => void;
+  onExport?: () => void;
 }) {
   const [text, setText] = useState('');
   const [images, setImages] = useState<string[]>([]);
@@ -435,6 +452,8 @@ function Composer(p: {
       if (name === 'compact') return p.onCompact();
       if (name === 'clear') return p.onClear();
       if (name === 'rewind') return p.onRewindLast();
+      if (name === 'fork') return p.onFork?.();
+      if (name === 'export') return p.onExport?.();
       if (name === 'plan') {
         p.onMode('plan');
         if (args.trim()) p.onSend(args.trim(), { images: imgs });

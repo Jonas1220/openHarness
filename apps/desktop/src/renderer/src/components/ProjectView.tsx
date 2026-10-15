@@ -19,6 +19,8 @@ export function ProjectView(p: {
   const [dirty, setDirty] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [servers, setServers] = useState<McpServerView[]>([]);
+  const [memory, setMemory] = useState('');
+  const [memoryDirty, setMemoryDirty] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -27,11 +29,17 @@ export function ProjectView(p: {
     void window.oh.readInstructions(p.project.path).then(setInstructions);
     void window.oh.listSkills(p.project.path).then(setSkills);
     void window.oh.listMcp(p.project.path).then(setServers);
+    void window.oh.readMemory('project', p.project.path).then(setMemory);
+    setMemoryDirty(false);
   }, [p.project.id]);
 
   const save = async () => {
     await p.onSave(draft);
     if (dirty && instructions !== null) await window.oh.writeInstructions(p.project.path, instructions);
+    if (memoryDirty) {
+      await window.oh.writeMemory('project', p.project.path, memory);
+      setMemoryDirty(false);
+    }
     setDirty(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
@@ -99,6 +107,21 @@ export function ProjectView(p: {
             onChange={(e) => {
               setInstructions(e.target.value);
               setDirty(true);
+            }}
+          />
+        </section>
+
+        <section>
+          <h3>Memory</h3>
+          <p className="hint">Facts the agent saved about this project. Unlike AGENTS.md, this stays on your Mac (in ~/.openharness) and isn't part of the repository.</p>
+          <textarea
+            className="memory"
+            rows={6}
+            value={memory}
+            placeholder="Nothing saved yet."
+            onChange={(e) => {
+              setMemory(e.target.value);
+              setMemoryDirty(true);
             }}
           />
         </section>

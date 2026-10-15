@@ -101,6 +101,7 @@ export type AgentEvent =
   | { type: 'mode_changed'; mode: PermissionMode }
   | { type: 'checkpoint'; checkpoint: Checkpoint }
   | { type: 'subagent_progress'; callId: string; summary: string }
+  | { type: 'hook'; event: string; message: string }
   | { type: 'usage'; usage: Usage }
   | { type: 'compacted'; removedMessages: number }
   | { type: 'error'; message: string }

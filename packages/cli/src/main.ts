@@ -82,6 +82,8 @@ async function main() {
     mode: (values.mode as PermissionMode) ?? (values.print ? 'read-only' : config.mode),
     maxContext: config.maxContext,
     think: config.think,
+    hooks: config.hooks,
+    toolSearch: config.toolSearch,
     extraTools: mcp.getTools(),
     approve: async (req) => {
       if (values.print) return { kind: 'deny', feedback: 'Non-interactive mode: approvals are not available.' };

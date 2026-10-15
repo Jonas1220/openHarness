@@ -113,6 +113,13 @@ export interface OhApi {
   openSession(id: string): Promise<OpenSession | null>;
   deleteSession(id: string): Promise<SessionMeta[]>;
   renameSession(id: string, title: string): Promise<SessionMeta[]>;
+  forkSession(id: string): Promise<OpenSession | null>;
+  /** Asks where to save; returns the file path, or null if cancelled. */
+  exportSession(id: string): Promise<string | null>;
+  readMemory(scope: 'user' | 'project', cwd: string): Promise<string>;
+  writeMemory(scope: 'user' | 'project', cwd: string, content: string): Promise<void>;
+  /** Adds the Playwright MCP server as "browser"; returns the browser it will drive (null = Chrome). */
+  addBrowserServer(): Promise<{ state: AppState; browser: string | null }>;
   listSessions(): Promise<SessionMeta[]>;
   send(sessionId: string, text: string, opts?: { images?: string[]; id?: string }): Promise<void>;
   abort(sessionId: string): Promise<void>;

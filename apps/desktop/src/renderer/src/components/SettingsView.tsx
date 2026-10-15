@@ -19,6 +19,11 @@ export function SettingsView(p: {
   const [mcpText, setMcpText] = useState(JSON.stringify(p.config.mcpServers, null, 2));
   const [mcpError, setMcpError] = useState('');
   const [servers, setServers] = useState(p.mcp);
+  const [hooksText, setHooksText] = useState(JSON.stringify(p.config.hooks ?? {}, null, 2));
+  const [hooksError, setHooksError] = useState('');
+  const [userMemory, setUserMemory] = useState('');
+  const [userMemoryDirty, setUserMemoryDirty] = useState(false);
+  const [browserNote, setBrowserNote] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => setServers(p.mcp), [p.mcp]);
@@ -32,6 +37,7 @@ export function SettingsView(p: {
   useEffect(() => {
     void window.oh.readInstructions(null).then(setMemory);
     void window.oh.listSkills(p.home).then(setSkills);
+    void window.oh.readMemory('user', p.home).then(setUserMemory);
   }, []);
 
   useEffect(
@@ -52,7 +58,19 @@ export function SettingsView(p: {
       setMcpError(`Invalid JSON: ${(e as Error).message}`);
       return;
     }
-    await p.onSave({ ...cfg, mcpServers });
+    let hooks: Config['hooks'];
+    try {
+      hooks = JSON.parse(hooksText || '{}');
+      setHooksError('');
+    } catch (e) {
+      setHooksError(`Invalid JSON: ${(e as Error).message}`);
+      return;
+    }
+    await p.onSave({ ...cfg, mcpServers, hooks });
+    if (userMemoryDirty) {
+      await window.oh.writeMemory('user', p.home, userMemory);
+      setUserMemoryDirty(false);
+    }
     if (memoryDirty) {
       await window.oh.writeInstructions(null, memory);
       setMemoryDirty(false);
@@ -192,6 +210,23 @@ export function SettingsView(p: {
         </section>
 
         <section className="form">
+          <h3>Memory</h3>
+          <p className="hint">
+            Facts the agent saved about you with its <code>remember</code> tool. They're shown to the agent in every chat; edit or delete them here. Facts about a single project are on its project page.
+          </p>
+          <textarea
+            className="memory"
+            rows={6}
+            value={userMemory}
+            placeholder="Nothing saved yet."
+            onChange={(e) => {
+              setUserMemory(e.target.value);
+              setUserMemoryDirty(true);
+            }}
+          />
+        </section>
+
+        <section className="form">
           <h3>Skills</h3>
           <p className="hint">
             Folders with a <code>SKILL.md</code> in <code>~/.openharness/skills</code>, <code>~/.agents/skills</code> or <code>~/.claude/skills</code>. Projects can add their own in <code>.agents/skills</code>.
@@ -240,6 +275,36 @@ export function SettingsView(p: {
               </label>
             ))}
           </div>
+          <div className="row">
+            <label className="field grow">
+              <span>Tool search</span>
+              <select value={cfg.toolSearch} onChange={(e) => setCfg({ ...cfg, toolSearch: e.target.value as Config['toolSearch'] })}>
+                <option value="auto">Automatic: load MCP tools on demand when there are more than 10</option>
+                <option value="on">Always load MCP tools on demand</option>
+                <option value="off">Always send every tool to the model</option>
+              </select>
+            </label>
+            {!servers.some((s) => s.name === 'browser') && (
+              <div className="field">
+                <span>Browser control</span>
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const { state, browser } = await window.oh.addBrowserServer();
+                    setServers(state.mcp);
+                    setMcpText(JSON.stringify(state.config.mcpServers, null, 2));
+                    const name = browser ? (browser.split('/').pop() ?? 'your browser') : 'Google Chrome';
+                    setBrowserNote(
+                      `Added the Playwright browser server. It opens ${name} with a fresh profile, so you're not logged in anywhere. The first start downloads it with npx, which takes a moment.`,
+                    );
+                  }}
+                >
+                  ＋ Add browser control
+                </button>
+              </div>
+            )}
+          </div>
+          {browserNote && <p className="hint">{browserNote}</p>}
           <McpServerList
             servers={servers}
             empty="No MCP servers found. Add one below, or set some up in Claude Code or Codex."
@@ -261,6 +326,24 @@ export function SettingsView(p: {
             <textarea className="code" rows={8} value={mcpText} onChange={(e) => setMcpText(e.target.value)} spellCheck={false} />
             {mcpError && <div className="notice error">{mcpError}</div>}
           </details>
+        </section>
+
+        <section className="form">
+          <h3>Hooks</h3>
+          <p className="hint">
+            Shell commands that run on <code>PreToolUse</code>, <code>PostToolUse</code>, <code>UserPromptSubmit</code> and <code>Stop</code>, in the same format as Claude Code's hooks, so you
+            can copy them from <code>~/.claude/settings.json</code>. The event arrives as JSON on stdin; exit code 2 blocks and sends stderr back to the agent. Matchers accept Claude Code tool
+            names (<code>Bash</code>, <code>Edit</code>, <code>Write</code>…) and Open Harness names.
+          </p>
+          <textarea
+            className="code"
+            rows={8}
+            value={hooksText}
+            onChange={(e) => setHooksText(e.target.value)}
+            spellCheck={false}
+            placeholder={'{\n  "PostToolUse": [\n    { "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "npm run lint --silent" }] }\n  ]\n}'}
+          />
+          {hooksError && <div className="notice error">{hooksError}</div>}
         </section>
       </div>
     </div>

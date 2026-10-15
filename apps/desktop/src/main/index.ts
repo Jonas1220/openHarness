@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
 import { execFileSync } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -19,7 +19,11 @@ import {
   loadCommands,
   loadConfig,
   loadSkills,
+  readMemory,
   saveConfig,
+  sessionToMarkdown,
+  writeMemory,
+  type MemoryScope,
   titleFrom,
   type ApprovalDecision,
   type Config,
@@ -104,6 +108,9 @@ function attach(session: Session) {
     mode: session.mode,
     maxContext: config.maxContext,
     think: config.think,
+    hooks: config.hooks,
+    toolSearch: config.toolSearch,
+    sessionId: session.id,
     history: session.messages,
     checkpoints: session.checkpoints,
     extraTools: mcp.toolsFor(globalMcpIds),
@@ -186,6 +193,19 @@ async function mcpViews(cwd?: string): Promise<McpServerView[]> {
     });
 }
 
+/** Playwright drives Chrome by default; fall back to another installed Chromium-based browser. */
+function findChromiumBrowser(): string | null {
+  const candidates = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    '/Applications/Arc.app/Contents/MacOS/Arc',
+  ];
+  for (const c of candidates) if (existsSync(c)) return c.includes('Google Chrome') ? null : c;
+  return null;
+}
+
 function summarize(s: DiscoveredServer): string {
   if (s.config.url) {
     try {
@@ -255,7 +275,10 @@ function registerIpc(): void {
     config = next;
     await saveConfig(config);
     client = new OllamaClient(config.ollamaHost);
-    for (const { agent } of live.values()) agent.setOptions({ maxContext: config.maxContext, think: config.think });
+    for (const { agent } of live.values()) {
+      agent.setOptions({ maxContext: config.maxContext, think: config.think, toolSearch: config.toolSearch });
+      agent.setHooks(config.hooks);
+    }
     await refreshMcp();
     return appState();
   });
@@ -310,6 +333,52 @@ function registerIpc(): void {
   ipcMain.handle('createSession', async (_e, opts: { cwd: string; model: string; mode: Config['mode']; projectId?: string }) => {
     const session = sessions.create(opts);
     return toOpen(attach(session));
+  });
+
+  ipcMain.handle('forkSession', async (_e, id: string) => {
+    const source = live.get(id);
+    if (source) await persist(source);
+    const fork = await sessions.fork(id);
+    return fork ? toOpen(attach(fork)) : null;
+  });
+
+  ipcMain.handle('exportSession', async (_e, id: string) => {
+    const entry = live.get(id);
+    const session = entry ? { ...entry.session, messages: entry.agent.messages } : await sessions.load(id);
+    if (!session) return null;
+    const safe = session.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'chat';
+    const res = await dialog.showSaveDialog(win!, {
+      defaultPath: path.join(os.homedir(), 'Downloads', `${safe}.md`),
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+    });
+    if (res.canceled || !res.filePath) return null;
+    await fs.writeFile(res.filePath, sessionToMarkdown(session), 'utf8');
+    return res.filePath;
+  });
+
+  ipcMain.handle('readMemory', (_e, scope: MemoryScope, cwd: string) => readMemory(scope, cwd));
+  ipcMain.handle('writeMemory', (_e, scope: MemoryScope, cwd: string, content: string) => writeMemory(scope, cwd, content));
+
+  ipcMain.handle('addBrowserServer', async () => {
+    const browser = findChromiumBrowser();
+    // Screenshots and snapshots go to ~/.openharness/browser, not into whatever folder the server starts in.
+    const args = ['-y', '@playwright/mcp@0.0.83', '--isolated', '--output-dir', path.join(dataDir(), 'browser')];
+    if (browser) args.push('--executable-path', browser);
+    config = {
+      ...config,
+      mcpServers: {
+        ...config.mcpServers,
+        browser: {
+          command: 'npx',
+          args,
+          // Looking at pages needs no approval; clicking, typing and running scripts still do.
+          trustedTools: ['browser_navigate', 'browser_snapshot', 'browser_take_screenshot', 'browser_wait_for', 'browser_console_messages', 'browser_network_requests', 'browser_tabs'],
+        },
+      },
+    };
+    await saveConfig(config);
+    await refreshMcp();
+    return { state: await appState(), browser };
   });
 
   ipcMain.handle('renameSession', async (_e, id: string, title: string) => {
@@ -524,6 +593,7 @@ app.whenReady().then(async () => {
   daemons = new DaemonManager(() => client, sessions, {
     extraTools: () => mcp.toolsFor(globalMcpIds),
     maxContext: () => config.maxContext,
+    agentOptions: () => ({ hooks: config.hooks, toolSearch: config.toolSearch, think: config.think }),
   });
   await daemons.load();
   daemons.on((event) => {

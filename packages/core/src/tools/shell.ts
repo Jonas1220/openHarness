@@ -13,17 +13,21 @@ export interface ExecResult {
 /** Run argv, optionally inside the Seatbelt sandbox, with a timeout and abort support. */
 export function exec(
   argv: string[],
-  opts: { cwd: string; timeoutMs: number; signal?: AbortSignal; sandbox?: SandboxPolicy; maxBytes?: number },
+  opts: { cwd: string; timeoutMs: number; signal?: AbortSignal; sandbox?: SandboxPolicy; maxBytes?: number; input?: string; env?: Record<string, string> },
 ): Promise<ExecResult> {
   const finalArgv = opts.sandbox ? wrapCommand(argv, opts.sandbox) : argv;
   const max = opts.maxBytes ?? 2_000_000;
   return new Promise((resolve, reject) => {
     const child = spawn(finalArgv[0]!, finalArgv.slice(1), {
       cwd: opts.cwd,
-      env: { ...process.env, PAGER: 'cat', GIT_PAGER: 'cat', TERM: 'dumb', NO_COLOR: '1', CI: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PAGER: 'cat', GIT_PAGER: 'cat', TERM: 'dumb', NO_COLOR: '1', CI: '1', ...opts.env },
+      stdio: [opts.input !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       detached: true,
     });
+    if (opts.input !== undefined && child.stdin) {
+      child.stdin.on('error', () => {}); // the process may exit without reading its input
+      child.stdin.end(opts.input);
+    }
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -40,10 +44,10 @@ export function exec(
     }, opts.timeoutMs);
     const onAbort = () => kill();
     opts.signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout.on('data', (d: Buffer) => {
+    child.stdout!.on('data', (d: Buffer) => {
       if (stdout.length < max) stdout += d.toString('utf8');
     });
-    child.stderr.on('data', (d: Buffer) => {
+    child.stderr!.on('data', (d: Buffer) => {
       if (stderr.length < max) stderr += d.toString('utf8');
     });
     child.on('error', (err) => {

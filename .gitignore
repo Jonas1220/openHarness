@@ -11,3 +11,4 @@ coverage/
 
 # Private research notes
 docs/research/agent-feature-comparison.md
+.playwright-mcp/
